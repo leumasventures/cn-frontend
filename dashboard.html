@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>C.N. Johnson Ventures Ltd - Sales Management System</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="styles.css">
+
+  <!-- SheetJS -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+  <!-- Chart.js -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+</head>
+<body data-theme="light">
+
+<header>
+  <h1>C.N. Johnson Ventures Limited</h1>
+  <p>Sales • Inventory • POS Management System</p>
+</header>
+
+<div class="container">
+  <nav class="sidebar">
+    <a href="#dashboard" class="active" onclick="showSection('dashboard')">Dashboard</a>
+    <a href="#warehouse"   onclick="showSection('warehouse')">Warehouses</a>
+    <a href="#products"    onclick="showSection('products')">Products / Stock</a>
+    <a href="#pos"         onclick="showSection('pos')">Sales Point (POS)</a>
+    <a href="#customers"   onclick="showSection('customers')">Customers</a>
+    <a href="#suppliers"   onclick="showSection('suppliers')">Suppliers</a>
+    <a href="#sales-reps"  onclick="showSection('sales-reps')">Sales Reps</a>
+    <a href="#purchases"   onclick="showSection('purchases')">Purchases</a>
+    <a href="#reports"     onclick="showSection('reports')">Reports & Analytics</a>
+    <a href="admin-users.html">User Management</a>
+    <a href="#settings"    onclick="showSection('settings')">Settings</a>
+    <button><a href="login.html">Log Out</a></button>
+  </nav>
+
+  <main>
+
+    <!-- ──────────────── DASHBOARD ──────────────── -->
+    <section id="dashboard" class="active">
+      <h2>Dashboard Overview</h2>
+    
+      <div class="stats-grid">
+        <div class="stat-card" style="border-left:5px solid var(--primary);">
+          <h3>Today's Sales</h3>
+          <div class="value">₦<span id="todaySales">0.00</span></div>
+        </div>
+        <div class="stat-card" style="border-left:5px solid #f59e0b;">
+          <h3>Low Stock Alerts</h3>
+          <div class="value"><span id="lowStockCount">0</span></div>
+        </div>
+        <div class="stat-card" style="border-left:5px solid #10b981;">
+          <h3>Active Customers</h3>
+          <div class="value"><span id="customerCount">0</span></div>
+        </div>
+        <div class="stat-card" style="border-left:5px solid #dc2626;">
+          <h3>Total Receivables</h3>
+          <div class="value">₦<span id="totalDebt">0.00</span></div>
+        </div>
+      </div>
+    
+      <div id="dashboard-extended"></div>
+    
+      <div class="card" style="margin-top:1.5rem;">
+        <h3 style="margin-bottom:1rem;">Quick Actions</h3>
+        <div style="display:flex;gap:1rem;flex-wrap:wrap;">
+          <button onclick="showSection('pos')">New Sale (POS)</button>
+          <button onclick="showSection('products')">Add Product</button>
+          <button onclick="showSection('purchases')">Record Purchase</button>
+          <button onclick="showSection('customers')">Add Customer</button>
+        </div>
+      </div>
+    </section>
+
+    <section id="products">
+      <div class="card">
+        <h2>Products & Inventory</h2>
+      </div>
+    </section>
+
+    <section id="pos">
+      <div class="card">
+        <h2>Point of Sale</h2>
+      </div>
+    </section>
+
+  </main>
+</div>
+
+  <script src="api.js"></script>
+  <script src="sync.js"></script>
+  <script src="auth.js"></script>
+  <script src="script.js"></script>
+
+  <!-- ✅ Socket.IO must load BEFORE the inline script below -->
+  <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+  <script>
+    const socket = io('https://cn-active-backend-1.onrender.com', {
+      transports: ['websocket', 'polling'],
+      withCredentials: true
+    });
+
+    socket.on('connect', () => console.log('✅ Socket connected!'));
+
+    socket.on('disconnect', () => console.log('❌ Socket disconnected'));
+
+    socket.on('message', (data) => {
+      console.log('Received:', data);
+    });
+
+    function sendMessage(text) {
+      socket.emit('message', { text });
+    }
+  </script>
+
+</body>
+</html>

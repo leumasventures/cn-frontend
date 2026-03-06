@@ -1,0 +1,500 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Customers | CN-Johnson</title>
+  <link rel="icon" href="data:,">
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@400;600;700&family=DM+Sans:wght@300;400;500;600&display=swap" rel="stylesheet" />
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --bg: #0b0b0b; --surface: #111; --card: #161616; --border: #242424;
+      --gold: #c9a84c; --gold-light: #e2c47a; --gold-dim: rgba(201,168,76,0.1);
+      --text: #f0ece4; --muted: #6b6560; --subtle: #1e1e1e;
+      --green: #22c55e; --green-bg: rgba(34,197,94,0.08); --green-border: rgba(34,197,94,0.25);
+      --red: #ef4444; --red-bg: rgba(239,68,68,0.08); --red-border: rgba(239,68,68,0.25);
+      --blue: #60a5fa; --blue-bg: rgba(96,165,250,0.08); --blue-border: rgba(96,165,250,0.25);
+      --radius: 10px; --ease: 0.18s ease;
+    }
+    html, body { height:100%; background:var(--bg); color:var(--text); font-family:'DM Sans',sans-serif; font-weight:300; }
+    body::before { content:''; position:fixed; inset:0; background:radial-gradient(ellipse 60% 40% at 80% 10%, rgba(201,168,76,0.04) 0%, transparent 55%); pointer-events:none; z-index:0; }
+
+    .layout { display:grid; grid-template-columns:220px 1fr; min-height:100vh; position:relative; z-index:1; }
+
+    /* Sidebar */
+    .sidebar { background:var(--surface); border-right:1px solid var(--border); padding:28px 0; display:flex; flex-direction:column; position:sticky; top:0; height:100vh; }
+    .sidebar-brand { padding:0 20px 24px; border-bottom:1px solid var(--border); margin-bottom:16px; }
+    .brand-name { font-family:'Cormorant Garamond',serif; font-size:20px; font-weight:700; color:var(--gold); letter-spacing:0.04em; }
+    .brand-role { font-size:11px; color:var(--muted); letter-spacing:0.1em; text-transform:uppercase; margin-top:2px; }
+    .nav-section { padding:0 12px; margin-bottom:4px; }
+    .nav-label { font-size:10px; letter-spacing:0.12em; text-transform:uppercase; color:var(--muted); padding:8px 8px 4px; }
+    .nav-item { display:flex; align-items:center; gap:10px; padding:9px 10px; border-radius:8px; color:var(--muted); font-size:13px; cursor:pointer; text-decoration:none; transition:all var(--ease); margin-bottom:2px; }
+    .nav-item:hover { background:var(--subtle); color:var(--text); }
+    .nav-item.active { background:var(--gold-dim); color:var(--gold); }
+    .nav-item svg { width:15px; height:15px; flex-shrink:0; }
+    .sidebar-footer { margin-top:auto; padding:16px 12px 0; border-top:1px solid var(--border); }
+    .logout-btn { display:flex; align-items:center; gap:10px; padding:9px 10px; border-radius:8px; color:var(--muted); font-size:13px; cursor:pointer; border:none; background:none; width:100%; transition:all var(--ease); font-family:'DM Sans',sans-serif; }
+    .logout-btn:hover { background:var(--red-bg); color:var(--red); }
+    .logout-btn svg { width:15px; height:15px; }
+
+    /* Main */
+    .main { padding:36px 40px; overflow-y:auto; }
+    .page-header { margin-bottom:28px; display:flex; align-items:flex-start; justify-content:space-between; gap:16px; }
+    .page-title { font-family:'Cormorant Garamond',serif; font-size:28px; font-weight:700; color:var(--text); margin-bottom:4px; }
+    .page-sub { font-size:13px; color:var(--muted); }
+    .btn-add { padding:10px 18px; background:linear-gradient(135deg,#c9a84c,#a8863a); border:none; border-radius:8px; color:#0d0d0d; font-family:'DM Sans',sans-serif; font-size:13px; font-weight:600; cursor:pointer; display:flex; align-items:center; gap:7px; transition:opacity var(--ease); white-space:nowrap; }
+    .btn-add:hover { opacity:0.88; }
+    .btn-add svg { width:14px; height:14px; }
+
+    /* Stats */
+    .stats-row { display:grid; grid-template-columns:repeat(4,1fr); gap:14px; margin-bottom:28px; }
+    .stat-card { background:var(--card); border:1px solid var(--border); border-radius:var(--radius); padding:16px 20px; animation:fadeUp 0.4s ease both; }
+    .stat-card:nth-child(1){animation-delay:.05s} .stat-card:nth-child(2){animation-delay:.1s} .stat-card:nth-child(3){animation-delay:.15s} .stat-card:nth-child(4){animation-delay:.2s}
+    @keyframes fadeUp { from{opacity:0;transform:translateY(10px)} to{opacity:1;transform:translateY(0)} }
+    .stat-label { font-size:11px; letter-spacing:0.08em; text-transform:uppercase; color:var(--muted); margin-bottom:6px; }
+    .stat-value { font-family:'Cormorant Garamond',serif; font-size:30px; font-weight:700; line-height:1; }
+    .stat-value.gold{color:var(--gold)} .stat-value.green{color:var(--green)} .stat-value.blue{color:var(--blue)} .stat-value.amber{color:#f59e0b;}
+
+    /* Toolbar */
+    .toolbar { display:flex; align-items:center; gap:10px; margin-bottom:16px; flex-wrap:wrap; }
+    .search-wrap { position:relative; flex:1; min-width:200px; max-width:320px; }
+    .search-wrap svg { position:absolute; left:10px; top:50%; transform:translateY(-50%); color:var(--muted); width:14px; height:14px; pointer-events:none; }
+    .search-input { width:100%; padding:9px 12px 9px 34px; background:var(--card); border:1px solid var(--border); border-radius:8px; color:var(--text); font-family:'DM Sans',sans-serif; font-size:13px; outline:none; transition:border-color var(--ease); }
+    .search-input:focus { border-color:var(--gold); }
+    .search-input::placeholder { color:#3a3630; }
+    .btn-refresh { padding:9px 14px; background:transparent; border:1px solid var(--border); border-radius:8px; color:var(--muted); font-size:13px; cursor:pointer; font-family:'DM Sans',sans-serif; display:flex; align-items:center; gap:6px; transition:all var(--ease); }
+    .btn-refresh:hover { border-color:var(--gold); color:var(--gold); }
+    .btn-refresh svg { width:13px; height:13px; }
+
+    /* Table */
+    .table-wrap { background:var(--card); border:1px solid var(--border); border-radius:12px; overflow:hidden; animation:fadeUp 0.4s 0.25s ease both; }
+    table { width:100%; border-collapse:collapse; }
+    thead th { padding:11px 16px; text-align:left; font-size:11px; font-weight:500; letter-spacing:0.08em; text-transform:uppercase; color:var(--muted); border-bottom:1px solid var(--border); background:rgba(255,255,255,0.01); white-space:nowrap; }
+    tbody tr { border-bottom:1px solid var(--border); transition:background var(--ease); }
+    tbody tr:last-child { border-bottom:none; }
+    tbody tr:hover { background:rgba(255,255,255,0.02); }
+    tbody td { padding:12px 16px; font-size:13px; vertical-align:middle; }
+
+    .cust-cell { display:flex; align-items:center; gap:10px; }
+    .avatar { width:34px; height:34px; border-radius:50%; background:var(--gold-dim); border:1px solid rgba(201,168,76,0.2); display:flex; align-items:center; justify-content:center; font-family:'Cormorant Garamond',serif; font-size:13px; color:var(--gold); font-weight:600; flex-shrink:0; }
+    .cust-name { font-weight:400; color:var(--text); }
+    .cust-email { font-size:11px; color:var(--muted); margin-top:1px; }
+
+    .points-cell { display:flex; align-items:center; gap:6px; font-size:13px; }
+    .points-icon { color:var(--gold); font-size:11px; }
+
+    .actions { display:flex; align-items:center; gap:6px; }
+    .btn-icon { width:30px; height:30px; border-radius:6px; background:transparent; border:1px solid var(--border); color:var(--muted); cursor:pointer; display:flex; align-items:center; justify-content:center; transition:all var(--ease); }
+    .btn-icon:hover { border-color:var(--gold); color:var(--gold); }
+    .btn-icon.danger:hover { border-color:var(--red); color:var(--red); }
+    .btn-icon svg { width:13px; height:13px; }
+
+    .empty-state { text-align:center; padding:60px 20px; color:var(--muted); }
+    .empty-state svg { width:40px; height:40px; margin:0 auto 12px; opacity:0.25; display:block; }
+    .empty-state p { font-size:14px; margin-bottom:16px; }
+    .loading-row td { text-align:center; padding:40px; }
+    .spinner { display:inline-block; width:16px; height:16px; border:2px solid var(--border); border-top-color:var(--gold); border-radius:50%; animation:spin 0.7s linear infinite; }
+    @keyframes spin{to{transform:rotate(360deg)}}
+
+    /* Modal */
+    .modal-overlay { position:fixed; inset:0; background:rgba(0,0,0,0.75); backdrop-filter:blur(4px); z-index:500; opacity:0; pointer-events:none; transition:opacity 0.2s ease; display:flex; align-items:center; justify-content:center; padding:20px; }
+    .modal-overlay.open { opacity:1; pointer-events:all; }
+    .modal { background:var(--surface); border:1px solid var(--border); border-radius:16px; width:100%; max-width:480px; max-height:90vh; overflow-y:auto; transform:scale(0.96); transition:transform 0.2s ease; }
+    .modal-overlay.open .modal { transform:scale(1); }
+    .modal-header { padding:22px 24px; border-bottom:1px solid var(--border); display:flex; align-items:center; justify-content:space-between; }
+    .modal-title { font-family:'Cormorant Garamond',serif; font-size:20px; font-weight:700; color:var(--text); }
+    .modal-close { width:30px; height:30px; border-radius:6px; background:transparent; border:1px solid var(--border); color:var(--muted); cursor:pointer; display:flex; align-items:center; justify-content:center; transition:all var(--ease); }
+    .modal-close:hover { border-color:var(--red); color:var(--red); }
+    .modal-close svg { width:14px; height:14px; }
+    .modal-body { padding:24px; display:flex; flex-direction:column; gap:14px; }
+    .form-group { display:flex; flex-direction:column; gap:6px; }
+    .form-label { font-size:11px; letter-spacing:0.08em; text-transform:uppercase; color:var(--muted); }
+    .form-input { padding:10px 12px; background:var(--subtle); border:1px solid var(--border); border-radius:8px; color:var(--text); font-family:'DM Sans',sans-serif; font-size:13px; outline:none; transition:border-color var(--ease); width:100%; }
+    .form-input:focus { border-color:var(--gold); }
+    .form-input::placeholder { color:#3a3630; }
+    .form-row { display:grid; grid-template-columns:1fr 1fr; gap:14px; }
+    .modal-footer { padding:16px 24px; border-top:1px solid var(--border); display:flex; gap:10px; justify-content:flex-end; }
+    .btn-cancel { padding:10px 18px; background:transparent; border:1px solid var(--border); border-radius:8px; color:var(--muted); font-family:'DM Sans',sans-serif; font-size:13px; cursor:pointer; transition:all var(--ease); }
+    .btn-cancel:hover { border-color:var(--text); color:var(--text); }
+    .btn-save { padding:10px 22px; background:linear-gradient(135deg,#c9a84c,#a8863a); border:none; border-radius:8px; color:#0d0d0d; font-family:'DM Sans',sans-serif; font-size:13px; font-weight:600; cursor:pointer; transition:opacity var(--ease); }
+    .btn-save:hover { opacity:0.88; }
+    .btn-save:disabled { opacity:0.4; cursor:not-allowed; }
+
+    /* Toast */
+    #toast { position:fixed; bottom:24px; right:24px; padding:12px 18px; border-radius:10px; font-size:13px; box-shadow:0 8px 24px rgba(0,0,0,0.4); transform:translateY(80px); opacity:0; transition:all 0.3s cubic-bezier(0.22,1,0.36,1); z-index:999; pointer-events:none; max-width:320px; }
+    #toast.show { transform:translateY(0); opacity:1; }
+    #toast.success { background:#0d2414; border:1px solid #1a5c30; color:#4ade80; }
+    #toast.error   { background:#2a1212; border:1px solid #7f2020; color:#f87171; }
+
+    @media(max-width:900px){ .layout{grid-template-columns:1fr} .sidebar{display:none} .main{padding:20px 16px} .stats-row{grid-template-columns:1fr 1fr} .form-row{grid-template-columns:1fr} }
+  </style>
+</head>
+<body>
+<div class="layout">
+
+  <!-- Sidebar -->
+  <aside class="sidebar">
+    <div class="sidebar-brand">
+      <div class="brand-name">C.N. Johnson</div>
+      <div class="brand-role" id="sidebarRole">Admin Panel</div>
+    </div>
+    <div class="nav-section">
+      <div class="nav-label">Main</div>
+      <a href="dashboard.html" class="nav-item">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
+        Dashboard
+      </a>
+      <a href="products.html" class="nav-item">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/></svg>
+        Products
+      </a>
+      <a href="customers.html" class="nav-item active">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+        Customers
+      </a>
+      <a href="admin-users.html" class="nav-item">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="4"/><path d="M6 20v-2a4 4 0 0 1 4-4h4a4 4 0 0 1 4 4v2"/></svg>
+        User Management
+      </a>
+      <a href="pos.html" class="nav-item">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+        Point of Sale
+      </a>
+    </div>
+    <div class="sidebar-footer">
+      <button class="logout-btn" onclick="logout()">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+        Sign Out
+      </button>
+    </div>
+  </aside>
+
+  <!-- Main -->
+  <main class="main">
+    <div class="page-header">
+      <div>
+        <div class="page-title">Customers</div>
+        <div class="page-sub">Manage your customer accounts and loyalty points</div>
+      </div>
+      <button class="btn-add" onclick="openModal()">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+        Add Customer
+      </button>
+    </div>
+
+    <!-- Stats -->
+    <div class="stats-row">
+      <div class="stat-card"><div class="stat-label">Total Customers</div><div class="stat-value gold" id="statTotal">—</div></div>
+      <div class="stat-card"><div class="stat-label">Total Loyalty Points</div><div class="stat-value amber" id="statPoints">—</div></div>
+      <div class="stat-card"><div class="stat-label">Total Balance</div><div class="stat-value green" id="statBalance">—</div></div>
+      <div class="stat-card"><div class="stat-label">With Email</div><div class="stat-value blue" id="statEmail">—</div></div>
+    </div>
+
+    <!-- Toolbar -->
+    <div class="toolbar">
+      <div class="search-wrap">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+        <input type="text" class="search-input" id="searchInput" placeholder="Search name, email, phone…" oninput="applyFilters()" />
+      </div>
+      <button class="btn-refresh" onclick="loadCustomers()">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+        Refresh
+      </button>
+    </div>
+
+    <!-- Table -->
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Customer</th>
+            <th>Phone</th>
+            <th>Address</th>
+            <th>Loyalty Pts</th>
+            <th>Balance</th>
+            <th>Joined</th>
+            <th>Actions</th>
+          </tr>
+        </thead>
+        <tbody id="tableBody">
+          <tr class="loading-row"><td colspan="7"><div class="spinner"></div></td></tr>
+        </tbody>
+      </table>
+    </div>
+  </main>
+</div>
+
+<!-- Add / Edit Modal -->
+<div class="modal-overlay" id="modalOverlay" onclick="handleOverlayClick(event)">
+  <div class="modal">
+    <div class="modal-header">
+      <div class="modal-title" id="modalTitle">Add Customer</div>
+      <button class="modal-close" onclick="closeModal()">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>
+    </div>
+    <div class="modal-body">
+      <div class="form-group">
+        <label class="form-label">Full Name *</label>
+        <input type="text" class="form-input" id="fName" placeholder="e.g. John Doe" />
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label class="form-label">Email</label>
+          <input type="email" class="form-input" id="fEmail" placeholder="john@example.com" />
+        </div>
+        <div class="form-group">
+          <label class="form-label">Phone</label>
+          <input type="text" class="form-input" id="fPhone" placeholder="e.g. 08012345678" />
+        </div>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Address</label>
+        <input type="text" class="form-input" id="fAddress" placeholder="Optional address" />
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label class="form-label">Loyalty Points</label>
+          <input type="number" class="form-input" id="fPoints" placeholder="0" min="0" value="0" />
+        </div>
+        <div class="form-group">
+          <label class="form-label">Balance (₦)</label>
+          <input type="number" class="form-input" id="fBalance" placeholder="0.00" min="0" step="0.01" value="0" />
+        </div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn-cancel" onclick="closeModal()">Cancel</button>
+      <button class="btn-save" id="saveBtn" onclick="saveCustomer()">Save Customer</button>
+    </div>
+  </div>
+</div>
+
+<div id="toast"></div>
+
+<script>
+(() => {
+  'use strict';
+  const API = 'https://cn-active-backend-1.onrender.com';
+
+  const token = localStorage.getItem('cnjohnson_access_token');
+  const auth  = JSON.parse(localStorage.getItem('cnjohnson_auth') || 'null');
+  if (!token || !auth) { window.location.href = 'login.html'; return; }
+
+  document.getElementById('sidebarRole').textContent = auth.name || auth.role;
+
+  const headers = { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` };
+
+  let allCustomers = [];
+  let editingId    = null;
+
+  /* ── Load customers ── */
+  window.loadCustomers = async () => {
+    document.getElementById('tableBody').innerHTML =
+      '<tr class="loading-row"><td colspan="7"><div class="spinner"></div></td></tr>';
+    try {
+      const res  = await fetch(`${API}/api/customers?limit=500`, { headers });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.message);
+      allCustomers = data.customers || data.data || [];
+      updateStats();
+      renderTable(allCustomers);
+    } catch (err) {
+      showToast('Failed to load customers: ' + err.message, 'error');
+      document.getElementById('tableBody').innerHTML =
+        '<tr><td colspan="7"><div class="empty-state"><p>Failed to load customers</p></div></td></tr>';
+    }
+  };
+
+  /* ── Stats ── */
+  function updateStats() {
+    const totalPoints  = allCustomers.reduce((s, c) => s + (c.loyaltyPoints || 0), 0);
+    const totalBalance = allCustomers.reduce((s, c) => s + (c.balance || 0), 0);
+    const withEmail    = allCustomers.filter(c => c.email).length;
+    document.getElementById('statTotal').textContent   = allCustomers.length;
+    document.getElementById('statPoints').textContent  = totalPoints.toLocaleString();
+    document.getElementById('statBalance').textContent = '₦' + fmt(totalBalance);
+    document.getElementById('statEmail').textContent   = withEmail;
+  }
+
+  /* ── Filters ── */
+  window.applyFilters = () => {
+    const q = document.getElementById('searchInput').value.toLowerCase();
+    const list = q
+      ? allCustomers.filter(c =>
+          c.name.toLowerCase().includes(q) ||
+          (c.email || '').toLowerCase().includes(q) ||
+          (c.phone || '').includes(q))
+      : allCustomers;
+    renderTable(list);
+  };
+
+  /* ── Render table ── */
+  function renderTable(list) {
+    if (!list.length) {
+      document.getElementById('tableBody').innerHTML = `
+        <tr><td colspan="7">
+          <div class="empty-state">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/></svg>
+            <p>No customers found</p>
+            <button class="btn-add" onclick="openModal()" style="margin:0 auto">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+              Add your first customer
+            </button>
+          </div>
+        </td></tr>`;
+      return;
+    }
+
+    document.getElementById('tableBody').innerHTML = list.map(c => `
+      <tr>
+        <td>
+          <div class="cust-cell">
+            <div class="avatar">${initials(c.name)}</div>
+            <div>
+              <div class="cust-name">${esc(c.name)}</div>
+              <div class="cust-email">${c.email ? esc(c.email) : '—'}</div>
+            </div>
+          </div>
+        </td>
+        <td style="color:var(--muted);font-size:12px">${c.phone ? esc(c.phone) : '—'}</td>
+        <td style="color:var(--muted);font-size:12px;max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${c.address ? esc(c.address) : '—'}</td>
+        <td>
+          <div class="points-cell">
+            <span class="points-icon">★</span>
+            <span style="color:var(--gold);font-weight:500">${(c.loyaltyPoints||0).toLocaleString()}</span>
+          </div>
+        </td>
+        <td style="font-family:'Cormorant Garamond',serif;font-size:15px;color:var(--gold)">₦${fmt(c.balance||0)}</td>
+        <td style="color:var(--muted);font-size:12px">${formatDate(c.createdAt)}</td>
+        <td>
+          <div class="actions">
+            <button class="btn-icon" title="Edit" onclick="openModal('${c.id}')">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+            </button>
+            <button class="btn-icon danger" title="Delete" onclick="deleteCustomer('${c.id}','${esc(c.name)}')">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4h6v2"/></svg>
+            </button>
+          </div>
+        </td>
+      </tr>`).join('');
+  }
+
+  /* ── Open modal ── */
+  window.openModal = (id = null) => {
+    editingId = id;
+    document.getElementById('modalTitle').textContent = id ? 'Edit Customer' : 'Add Customer';
+    document.getElementById('saveBtn').textContent    = id ? 'Update Customer' : 'Save Customer';
+
+    if (id) {
+      const c = allCustomers.find(x => x.id === id);
+      if (!c) return;
+      document.getElementById('fName').value    = c.name || '';
+      document.getElementById('fEmail').value   = c.email || '';
+      document.getElementById('fPhone').value   = c.phone || '';
+      document.getElementById('fAddress').value = c.address || '';
+      document.getElementById('fPoints').value  = c.loyaltyPoints || 0;
+      document.getElementById('fBalance').value = c.balance || 0;
+    } else {
+      document.getElementById('fName').value    = '';
+      document.getElementById('fEmail').value   = '';
+      document.getElementById('fPhone').value   = '';
+      document.getElementById('fAddress').value = '';
+      document.getElementById('fPoints').value  = '0';
+      document.getElementById('fBalance').value = '0';
+    }
+
+    document.getElementById('modalOverlay').classList.add('open');
+    setTimeout(() => document.getElementById('fName').focus(), 100);
+  };
+
+  window.closeModal = () => {
+    document.getElementById('modalOverlay').classList.remove('open');
+    editingId = null;
+  };
+
+  window.handleOverlayClick = (e) => {
+    if (e.target === document.getElementById('modalOverlay')) closeModal();
+  };
+
+  /* ── Save customer ── */
+  window.saveCustomer = async () => {
+    const name = document.getElementById('fName').value.trim();
+    if (!name) return showToast('Customer name is required', 'error');
+
+    const payload = {
+      name,
+      email:         document.getElementById('fEmail').value.trim()   || undefined,
+      phone:         document.getElementById('fPhone').value.trim()   || undefined,
+      address:       document.getElementById('fAddress').value.trim() || undefined,
+      loyaltyPoints: parseInt(document.getElementById('fPoints').value)  || 0,
+      balance:       parseFloat(document.getElementById('fBalance').value) || 0,
+    };
+
+    const btn = document.getElementById('saveBtn');
+    btn.disabled = true;
+    btn.textContent = editingId ? 'Updating…' : 'Saving…';
+
+    try {
+      const url    = editingId ? `${API}/api/customers/${editingId}` : `${API}/api/customers`;
+      const method = editingId ? 'PUT' : 'POST';
+      const res    = await fetch(url, { method, headers, body: JSON.stringify(payload) });
+      const data   = await res.json();
+      if (!res.ok) throw new Error(data.message);
+
+      showToast(editingId ? '✓ Customer updated' : '✓ Customer added', 'success');
+      closeModal();
+      await loadCustomers();
+    } catch (err) {
+      showToast('Error: ' + err.message, 'error');
+    } finally {
+      btn.disabled = false;
+      btn.textContent = editingId ? 'Update Customer' : 'Save Customer';
+    }
+  };
+
+  /* ── Delete customer ── */
+  window.deleteCustomer = async (id, name) => {
+    if (!confirm(`Delete "${name}"? This cannot be undone.`)) return;
+    try {
+      const res  = await fetch(`${API}/api/customers/${id}`, { method: 'DELETE', headers });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.message);
+      showToast('Customer deleted', 'success');
+      await loadCustomers();
+    } catch (err) {
+      showToast('Error: ' + err.message, 'error');
+    }
+  };
+
+  /* ── Logout ── */
+  window.logout = () => {
+    localStorage.removeItem('cnjohnson_access_token');
+    localStorage.removeItem('cnjohnson_auth');
+    window.location.href = 'login.html';
+  };
+
+  /* ── Helpers ── */
+  function fmt(n) { return Number(n).toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ','); }
+  function esc(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+  function initials(name) { return name.split(' ').slice(0,2).map(w=>w[0]).join('').toUpperCase(); }
+  function formatDate(iso) { return new Date(iso).toLocaleDateString('en-GB',{day:'numeric',month:'short',year:'numeric'}); }
+
+  let toastTimer;
+  function showToast(msg, type = 'success') {
+    const t = document.getElementById('toast');
+    t.textContent = msg; t.className = `show ${type}`;
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => { t.className = type; }, 3500);
+  }
+
+  document.addEventListener('keydown', e => { if (e.key === 'Escape') closeModal(); });
+
+  loadCustomers();
+})();
+</script>
+</body>
+</html>

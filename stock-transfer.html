@@ -1,0 +1,229 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+  <title>Stock Transfers | CN-Johnson</title>
+  <link rel="icon" href="data:,">
+  <link rel="preconnect" href="https://fonts.googleapis.com"/>
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@400;600;700&family=DM+Sans:wght@300;400;500;600&display=swap" rel="stylesheet"/>
+  <style>
+    *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+    :root{
+      --bg:#0b0b0b;--surface:#111;--card:#161616;--border:#222;
+      --gold:#c9a84c;--gold-light:#e2c47a;--gold-dim:rgba(201,168,76,0.1);
+      --text:#f0ece4;--muted:#6b6560;--subtle:#1e1e1e;
+      --green:#22c55e;--green-bg:rgba(34,197,94,0.1);--green-border:rgba(34,197,94,0.3);
+      --red:#ef4444;--red-bg:rgba(239,68,68,0.1);--red-border:rgba(239,68,68,0.3);
+      --amber:#f59e0b;--amber-bg:rgba(245,158,11,0.1);--amber-border:rgba(245,158,11,0.25);
+      --blue:#60a5fa;--blue-bg:rgba(96,165,250,0.1);--blue-border:rgba(96,165,250,0.25);
+      --radius:8px;--ease:0.15s ease
+    }
+    html,body{min-height:100%;background:var(--bg);color:var(--text);font-family:"DM Sans",sans-serif;font-weight:300}
+    body::before{content:"";position:fixed;inset:0;background:radial-gradient(ellipse 60% 40% at 80% 10%,rgba(201,168,76,0.04) 0%,transparent 55%);pointer-events:none;z-index:0}
+    .layout{display:grid;grid-template-columns:220px 1fr;min-height:100vh;position:relative;z-index:1}
+    .sidebar{background:var(--surface);border-right:1px solid var(--border);padding:28px 0;display:flex;flex-direction:column;position:sticky;top:0;height:100vh;overflow-y:auto}
+    .sidebar::-webkit-scrollbar{width:3px}.sidebar::-webkit-scrollbar-thumb{background:var(--border)}
+    .sidebar-brand{padding:0 20px 24px;border-bottom:1px solid var(--border);margin-bottom:16px}
+    .brand-name{font-family:"Cormorant Garamond",serif;font-size:20px;font-weight:700;color:var(--gold);letter-spacing:.04em}
+    .brand-role{font-size:11px;color:var(--muted);letter-spacing:.1em;text-transform:uppercase;margin-top:2px}
+    .nav-section{padding:0 12px;margin-bottom:4px}
+    .nav-label{font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);padding:8px 8px 4px}
+    .nav-item{display:flex;align-items:center;gap:10px;padding:9px 10px;border-radius:8px;color:var(--muted);font-size:13px;cursor:pointer;text-decoration:none;transition:all var(--ease);margin-bottom:2px}
+    .nav-item:hover{background:var(--subtle);color:var(--text)}
+    .nav-item.active{background:var(--gold-dim);color:var(--gold)}
+    .nav-item svg{width:15px;height:15px;flex-shrink:0}
+    .sidebar-footer{margin-top:auto;padding:16px 12px 0;border-top:1px solid var(--border)}
+    .logout-btn{display:flex;align-items:center;gap:10px;padding:9px 10px;border-radius:8px;color:var(--muted);font-size:13px;cursor:pointer;border:none;background:none;width:100%;transition:all var(--ease);font-family:"DM Sans",sans-serif}
+    .logout-btn:hover{background:var(--red-bg);color:var(--red)}
+    .logout-btn svg{width:15px;height:15px}
+    .main{padding:36px 40px;overflow-y:auto;min-height:100vh}
+    .page-header{display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:28px;flex-wrap:wrap;gap:12px}
+    .page-header-left h1{font-family:"Cormorant Garamond",serif;font-size:28px;font-weight:700;color:var(--text)}
+    .page-header-left p{font-size:13px;color:var(--muted);margin-top:3px}
+    .btn{display:inline-flex;align-items:center;gap:7px;padding:9px 16px;border-radius:var(--radius);font-size:13px;font-weight:500;cursor:pointer;font-family:"DM Sans",sans-serif;border:none;transition:all var(--ease)}
+    .btn-primary{background:linear-gradient(135deg,#c9a84c,#a8863a);color:#0d0d0d;box-shadow:0 4px 14px rgba(201,168,76,0.2)}
+    .btn-primary:hover{opacity:.9;transform:translateY(-1px)}
+    .btn-secondary{background:transparent;color:var(--muted);border:1px solid var(--border)}
+    .btn-secondary:hover{border-color:var(--gold);color:var(--gold)}
+    .btn-danger{background:var(--red-bg);color:var(--red);border:1px solid var(--red-border)}
+    .btn-danger:hover{background:rgba(239,68,68,0.2)}
+    .btn-sm{padding:5px 11px;font-size:12px}
+    .btn svg{width:14px;height:14px}
+    .stats-row{display:grid;gap:14px;margin-bottom:28px}
+    .stat-card{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:18px 20px;animation:fadeUp .4s ease both}
+    @keyframes fadeUp{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:translateY(0)}}
+    .stat-label{font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);margin-bottom:8px}
+    .stat-value{font-family:"Cormorant Garamond",serif;font-size:30px;font-weight:700;line-height:1}
+    .stat-value.gold{color:var(--gold)}.stat-value.green{color:var(--green)}.stat-value.red{color:var(--red)}.stat-value.blue{color:var(--blue)}.stat-value.amber{color:var(--amber)}
+    .table-card{background:var(--card);border:1px solid var(--border);border-radius:12px;overflow:hidden;animation:fadeUp .4s .2s ease both}
+    .table-toolbar{padding:14px 18px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+    .search-wrap{position:relative}.search-wrap svg{position:absolute;left:10px;top:50%;transform:translateY(-50%);width:14px;height:14px;color:var(--muted);pointer-events:none}
+    .search-input{padding:8px 12px 8px 32px;background:var(--subtle);border:1px solid var(--border);border-radius:var(--radius);color:var(--text);font-family:"DM Sans",sans-serif;font-size:13px;outline:none;transition:border-color var(--ease);width:240px}
+    .search-input:focus{border-color:var(--gold)}
+    .search-input::placeholder{color:#3a3630}
+    table{width:100%;border-collapse:collapse}
+    thead th{padding:11px 16px;text-align:left;font-size:11px;font-weight:500;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);border-bottom:1px solid var(--border);background:rgba(255,255,255,.01);white-space:nowrap}
+    tbody tr{border-bottom:1px solid var(--border);transition:background var(--ease)}
+    tbody tr:last-child{border-bottom:none}
+    tbody tr:hover{background:rgba(255,255,255,.02)}
+    tbody td{padding:12px 16px;font-size:13px;vertical-align:middle}
+    .empty-state{text-align:center;padding:60px 20px;color:var(--muted)}
+    .empty-state svg{width:36px;height:36px;margin:0 auto 12px;opacity:.25;display:block}
+    .badge{display:inline-flex;align-items:center;padding:3px 10px;border-radius:999px;font-size:11px;font-weight:500}
+    .badge-green{background:var(--green-bg);border:1px solid var(--green-border);color:var(--green)}
+    .badge-red{background:var(--red-bg);border:1px solid var(--red-border);color:var(--red)}
+    .badge-amber{background:var(--amber-bg);border:1px solid var(--amber-border);color:var(--amber)}
+    .badge-blue{background:var(--blue-bg);border:1px solid var(--blue-border);color:var(--blue)}
+    .badge-muted{background:var(--subtle);border:1px solid var(--border);color:var(--muted)}
+    .badge-gold{background:var(--gold-dim);border:1px solid rgba(201,168,76,.3);color:var(--gold)}
+    .modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.8);display:flex;align-items:center;justify-content:center;z-index:200;opacity:0;pointer-events:none;transition:opacity .2s;backdrop-filter:blur(4px)}
+    .modal-overlay.open{opacity:1;pointer-events:all}
+    .modal{background:var(--card);border:1px solid var(--border);border-radius:14px;padding:28px;width:90%;max-width:520px;max-height:90vh;overflow-y:auto;transform:scale(.96);transition:transform .2s}
+    .modal-overlay.open .modal{transform:scale(1)}
+    .modal-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:22px}
+    .modal-title{font-family:"Cormorant Garamond",serif;font-size:22px;font-weight:700;color:var(--text)}
+    .modal-close{background:none;border:none;color:var(--muted);cursor:pointer;font-size:22px;line-height:1;transition:color var(--ease)}
+    .modal-close:hover{color:var(--text)}
+    .form-group{margin-bottom:16px}
+    .form-group label{display:block;font-size:11px;font-weight:500;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);margin-bottom:6px}
+    .form-input{width:100%;padding:10px 13px;background:rgba(255,255,255,.03);border:1px solid var(--border);border-radius:var(--radius);color:var(--text);font-family:"DM Sans",sans-serif;font-size:13px;outline:none;transition:border-color var(--ease)}
+    .form-input:focus{border-color:var(--gold);box-shadow:0 0 0 3px rgba(201,168,76,.08)}
+    .form-input::placeholder{color:#3a3630}
+    select.form-input{cursor:pointer}
+    .form-row{display:grid;gap:12px}
+    .fr2{grid-template-columns:1fr 1fr}
+    .fr3{grid-template-columns:1fr 1fr 1fr}
+    .modal-footer{display:flex;gap:10px;justify-content:flex-end;margin-top:24px;padding-top:18px;border-top:1px solid var(--border)}
+    #toast{position:fixed;bottom:20px;right:24px;padding:11px 18px;border-radius:9px;font-size:13px;box-shadow:0 8px 24px rgba(0,0,0,.4);z-index:300;transform:translateY(60px);opacity:0;transition:all .3s cubic-bezier(.22,1,.36,1);pointer-events:none}
+    #toast.show{transform:translateY(0);opacity:1}
+    #toast.success{background:#0d2414;border:1px solid #1a5c30;color:#4ade80}
+    #toast.error{background:#2a1212;border:1px solid #7f2020;color:#f87171}
+    .spinner{display:inline-block;width:16px;height:16px;border:2px solid var(--border);border-top-color:var(--gold);border-radius:50%;animation:spin .7s linear infinite}
+    @keyframes spin{to{transform:rotate(360deg)}}
+    @media(max-width:900px){.layout{grid-template-columns:1fr}.sidebar{display:none}.main{padding:20px 14px}}
+  </style>
+</head>
+<body><div class="layout">
+<aside class="sidebar">
+  <div class="sidebar-brand"><div class="brand-name">C.N. Johnson</div><div class="brand-role" id="sidebarUser">Loading…</div></div>
+  <div class="nav-section"><div class="nav-label">Main</div>
+    <a href="dashboard.html" class="nav-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>Dashboard</a>
+    <a href="sales-history.html" class="nav-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 000 7h5a3.5 3.5 0 010 7H6"/></svg>Sales</a>
+    <a href="purchases.html" class="nav-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 2L3 6v14a2 2 0 002 2h14a2 2 0 002-2V6l-3-4z"/><line x1="3" y1="6" x2="21" y2="6"/></svg>Purchases</a>
+    <a href="quotes.html" class="nav-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>Quotes</a>
+    <a href="credit-notes.html" class="nav-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="1" y="4" width="22" height="16" rx="2"/><line x1="1" y1="10" x2="23" y2="10"/></svg>Credit Notes</a>
+  </div>
+  <div class="nav-section"><div class="nav-label">Inventory</div>
+    <a href="suppliers.html" class="nav-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="1" y="3" width="15" height="13"/><polygon points="16 8 20 8 23 11 23 16 16 16 16 8"/><circle cx="5.5" cy="18.5" r="2.5"/><circle cx="18.5" cy="18.5" r="2.5"/></svg>Suppliers</a>
+    <a href="warehouses.html" class="nav-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>Warehouses</a>
+    <a href="stock-transfers.html" class="nav-item active"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="17 1 21 5 17 9"/><path d="M3 11V9a4 4 0 014-4h14"/><polyline points="7 23 3 19 7 15"/><path d="M21 13v2a4 4 0 01-4 4H3"/></svg>Stock Transfers</a>
+  </div>
+  <div class="nav-section"><div class="nav-label">Finance</div>
+    <a href="expenses.html" class="nav-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>Expenses</a>
+    <a href="reports.html" class="nav-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>Reports</a>
+  </div>
+  <div class="nav-section"><div class="nav-label">Admin</div>
+    <a href="admin-users.html" class="nav-item" id="adminLink" style="display:none"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/></svg>Users</a>
+  </div>
+  <div class="sidebar-footer">
+    <button class="logout-btn" onclick="CNJlogout()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>Sign Out</button>
+  </div>
+</aside>
+<main class="main">
+
+<div class="page-header">
+  <div class="page-header-left"><h1>Stock Transfers</h1><p>Move inventory between warehouses</p></div>
+  <button class="btn btn-primary" onclick="openModal()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>New Transfer</button>
+</div>
+<div class="stats-row" style="grid-template-columns:repeat(3,1fr)">
+  <div class="stat-card"><div class="stat-label">Total Transfers</div><div class="stat-value gold" id="stCount">—</div></div>
+  <div class="stat-card"><div class="stat-label">Units Moved</div><div class="stat-value blue" id="stUnits">—</div></div>
+  <div class="stat-card"><div class="stat-label">This Month</div><div class="stat-value green" id="stMonth">—</div></div>
+</div>
+<div class="table-card">
+  <div class="table-toolbar">
+    <div class="search-wrap"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+    <input class="search-input" id="srch" placeholder="Search product, warehouse…" oninput="render()"/></div>
+  </div>
+  <table><thead><tr><th>Product</th><th>From</th><th>To</th><th>Qty</th><th>Note</th><th>Date</th></tr></thead>
+  <tbody id="tbody"></tbody></table>
+</div>
+<div class="modal-overlay" id="modal">
+  <div class="modal">
+    <div class="modal-header"><span class="modal-title">New Stock Transfer</span><button class="modal-close" onclick="closeModal()">&#215;</button></div>
+    <div class="form-group"><label>Product *</label><select class="form-input" id="fProduct"><option value="">Select product</option></select></div>
+    <div class="form-row fr2">
+      <div class="form-group"><label>From Warehouse *</label><select class="form-input" id="fFrom"><option value="">Select</option></select></div>
+      <div class="form-group"><label>To Warehouse *</label><select class="form-input" id="fTo"><option value="">Select</option></select></div>
+    </div>
+    <div class="form-row fr2">
+      <div class="form-group"><label>Quantity *</label><input class="form-input" id="fQty" type="number" placeholder="0" min="1"/></div>
+      <div class="form-group"><label>Note</label><input class="form-input" id="fNote" placeholder="Optional"/></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
+      <button class="btn btn-primary" onclick="save()">Transfer</button>
+    </div>
+  </div>
+</div>
+<script>
+let data=[],products=[],warehouses=[];
+async function load(){
+  const [pr,wr,dr]=await Promise.all([fetch(API+"/api/products",H),fetch(API+"/api/warehouses",H),fetch(API+"/api/stock-transfers?limit=500",H)]);
+  const pd=await pr.json(),wd=await wr.json(),dd=await dr.json();
+  products=pd.products||pd.data||[];warehouses=wd.warehouses||wd.data||[];data=dd.stockTransfers||dd.transfers||dd.data||[];
+  const wHtml='<option value="">Select</option>'+warehouses.map(w=>`<option value="${w.id}">${esc(w.name)}</option>`).join("");
+  document.getElementById("fProduct").innerHTML='<option value="">Select product</option>'+products.map(p=>`<option value="${p.id}">${esc(p.name)} (${p.stock} in stock)</option>`).join("");
+  document.getElementById("fFrom").innerHTML=wHtml;document.getElementById("fTo").innerHTML=wHtml;
+  const now=new Date(),tm=data.filter(x=>{const d=new Date(x.createdAt);return d.getMonth()===now.getMonth()&&d.getFullYear()===now.getFullYear();});
+  document.getElementById("stCount").textContent=data.length;
+  document.getElementById("stUnits").textContent=data.reduce((s,x)=>s+(x.qty||0),0);
+  document.getElementById("stMonth").textContent=tm.length;
+  render();
+}
+function render(){
+  const q=document.getElementById("srch").value.toLowerCase();
+  const rows=data.filter(x=>(x.product?.name||"").toLowerCase().includes(q)||(x.fromWarehouse?.name||"").toLowerCase().includes(q)||(x.toWarehouse?.name||"").toLowerCase().includes(q));
+  const tb=document.getElementById("tbody");
+  if(!rows.length){tb.innerHTML='<tr><td colspan="6"><div class="empty-state"><p>No transfers found</p></div></td></tr>';return;}
+  tb.innerHTML=rows.map(x=>`<tr>
+    <td><strong>${esc(x.product?.name||"—")}</strong></td>
+    <td><span class="badge badge-muted">${esc(x.fromWarehouse?.name||"—")}</span></td>
+    <td><span class="badge badge-blue">${esc(x.toWarehouse?.name||"—")}</span></td>
+    <td><strong>${x.qty}</strong></td>
+    <td style="color:var(--muted);font-size:12px">${esc(x.note||"—")}</td>
+    <td style="color:var(--muted);font-size:12px">${fmtDate(x.createdAt)}</td>
+  </tr>`).join("");
+}
+function openModal(){["fProduct","fFrom","fTo","fQty","fNote"].forEach(id=>document.getElementById(id).value="");document.getElementById("modal").classList.add("open");}
+function closeModal(){document.getElementById("modal").classList.remove("open");}
+async function save(){
+  const productId=document.getElementById("fProduct").value,fromWarehouseId=document.getElementById("fFrom").value,toWarehouseId=document.getElementById("fTo").value,qty=parseInt(document.getElementById("fQty").value);
+  if(!productId||!fromWarehouseId||!toWarehouseId||!qty){toast("All fields required","error");return;}
+  if(fromWarehouseId===toWarehouseId){toast("From and To must differ","error");return;}
+  const body={productId,fromWarehouseId,toWarehouseId,qty,note:document.getElementById("fNote").value};
+  const r=await fetch(API+"/api/stock-transfers",{...H,method:"POST",body:JSON.stringify(body)});
+  const d=await r.json();if(!r.ok){toast(d.message||"Error","error");return;}
+  toast("Transfer recorded");closeModal();load();
+}
+load();
+</script></main></div>
+<div id="toast"></div>
+<script>
+const _a=JSON.parse(localStorage.getItem("cnjohnson_auth")||"null");
+const _t=localStorage.getItem("cnjohnson_access_token");
+if(!_t||!_a){window.location.href="login.html";}
+if(document.getElementById("sidebarUser"))document.getElementById("sidebarUser").textContent=_a?.name||"User";
+if(_a?.role==="ADMIN"){const al=document.getElementById("adminLink");if(al)al.style.display="flex";}
+function CNJlogout(){localStorage.removeItem("cnjohnson_access_token");localStorage.removeItem("cnjohnson_auth");localStorage.removeItem("cnjohnson_token_expiry");window.location.href="login.html";}
+let _tt;
+function toast(msg,type="success"){const t=document.getElementById("toast");t.textContent=msg;t.className="show "+type;clearTimeout(_tt);_tt=setTimeout(()=>t.className=type,3200);}
+function fmt(n){return"₦"+Number(n||0).toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g,",");}
+function fmtDate(d){return d?new Date(d).toLocaleDateString("en-GB",{day:"numeric",month:"short",year:"numeric"}):"--";}
+function esc(s){return String(s||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");}
+const API="https://cn-active-backend-1.onrender.com";
+const H={headers:{Authorization:"Bearer "+_t,"Content-Type":"application/json"}};
+</script>
+</body></html>

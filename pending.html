@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Pending Approval | CN-Johnson</title>
+  <link rel="icon" href="data:,">
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@400;600;700&family=DM+Sans:wght@300;400;500&display=swap" rel="stylesheet" />
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --bg: #0d0d0d; --card: #141414; --border: #2a2a2a;
+      --gold: #c9a84c; --gold-light: #e2c47a; --gold-dim: rgba(201,168,76,0.1);
+      --text: #f0ece4; --muted: #7a7570; --radius: 10px; --ease: 0.2s ease;
+    }
+    html, body { height: 100%; background: var(--bg); color: var(--text); font-family: 'DM Sans', sans-serif; font-weight: 300; }
+    body::before { content:''; position:fixed; inset:0; background: radial-gradient(ellipse 70% 50% at 50% 30%, rgba(201,168,76,0.06) 0%, transparent 60%); pointer-events:none; z-index:0; }
+    .page { min-height:100vh; display:flex; align-items:center; justify-content:center; padding:32px 16px; position:relative; z-index:1; }
+
+    .card {
+      width:100%; max-width:440px;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 18px;
+      padding: 52px 40px 44px;
+      text-align: center;
+      box-shadow: 0 32px 80px rgba(0,0,0,0.7), 0 0 0 1px rgba(201,168,76,0.06);
+      animation: rise 0.6s cubic-bezier(0.22,1,0.36,1) both;
+    }
+    @keyframes rise { from { opacity:0; transform:translateY(24px) scale(0.97); } to { opacity:1; transform:translateY(0) scale(1); } }
+
+    /* Animated clock icon */
+    .icon-wrap {
+      width: 72px; height: 72px;
+      border: 1px solid rgba(201,168,76,0.3);
+      border-radius: 50%;
+      background: var(--gold-dim);
+      display: flex; align-items: center; justify-content: center;
+      margin: 0 auto 24px;
+      position: relative;
+      animation: rise 0.6s 0.1s cubic-bezier(0.22,1,0.36,1) both;
+    }
+
+    /* Pulsing ring */
+    .icon-wrap::before {
+      content: '';
+      position: absolute; inset: -8px;
+      border-radius: 50%;
+      border: 1px solid rgba(201,168,76,0.15);
+      animation: pulse 2.5s ease-in-out infinite;
+    }
+    .icon-wrap::after {
+      content: '';
+      position: absolute; inset: -16px;
+      border-radius: 50%;
+      border: 1px solid rgba(201,168,76,0.07);
+      animation: pulse 2.5s 0.4s ease-in-out infinite;
+    }
+    @keyframes pulse { 0%,100% { transform:scale(1); opacity:1; } 50% { transform:scale(1.08); opacity:0.5; } }
+
+    .icon-wrap svg { width:32px; height:32px; }
+
+    .brand-name {
+      font-family: 'Cormorant Garamond', serif;
+      font-size: 13px; font-weight: 600;
+      letter-spacing: 0.15em; text-transform: uppercase;
+      color: var(--gold); margin-bottom: 20px;
+      animation: rise 0.6s 0.15s cubic-bezier(0.22,1,0.36,1) both;
+    }
+
+    h1 {
+      font-family: 'Cormorant Garamond', serif;
+      font-size: 28px; font-weight: 700;
+      color: var(--text); line-height: 1.2;
+      margin-bottom: 14px;
+      animation: rise 0.6s 0.2s cubic-bezier(0.22,1,0.36,1) both;
+    }
+
+    .subtitle {
+      font-size: 14px; color: var(--muted);
+      line-height: 1.7; margin-bottom: 32px;
+      animation: rise 0.6s 0.25s cubic-bezier(0.22,1,0.36,1) both;
+    }
+
+    .subtitle strong { color: var(--text); font-weight: 400; }
+
+    /* Status steps */
+    .steps {
+      display: flex; flex-direction: column; gap: 0;
+      margin-bottom: 36px; text-align: left;
+      animation: rise 0.6s 0.3s cubic-bezier(0.22,1,0.36,1) both;
+    }
+
+    .step {
+      display: flex; align-items: flex-start; gap: 14px;
+      padding: 14px 0;
+      border-bottom: 1px solid var(--border);
+    }
+    .step:last-child { border-bottom: none; }
+
+    .step-dot {
+      width: 28px; height: 28px; border-radius: 50%;
+      flex-shrink: 0;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 12px; margin-top: 1px;
+    }
+    .step-dot.done  { background: rgba(201,168,76,0.15); border: 1px solid var(--gold); color: var(--gold); }
+    .step-dot.wait  { background: rgba(255,255,255,0.03); border: 1px solid var(--border); color: var(--muted); }
+    .step-dot.pulse-dot { animation: dotPulse 1.8s ease-in-out infinite; }
+    @keyframes dotPulse { 0%,100% { box-shadow:0 0 0 0 rgba(201,168,76,0.3); } 50% { box-shadow:0 0 0 6px rgba(201,168,76,0); } }
+
+    .step-text { flex: 1; }
+    .step-title { font-size: 13px; font-weight: 500; color: var(--text); margin-bottom: 2px; }
+    .step-title.muted { color: var(--muted); font-weight: 400; }
+    .step-desc { font-size: 12px; color: var(--muted); }
+
+    /* User info pill */
+    .user-pill {
+      display: inline-flex; align-items: center; gap: 8px;
+      background: rgba(255,255,255,0.03);
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      padding: 8px 16px;
+      font-size: 13px; color: var(--muted);
+      margin-bottom: 32px;
+      animation: rise 0.6s 0.28s cubic-bezier(0.22,1,0.36,1) both;
+    }
+    .user-pill span { color: var(--text); }
+
+    .btn-back {
+      width: 100%;
+      padding: 13px;
+      background: transparent;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      color: var(--muted);
+      font-family: 'DM Sans', sans-serif;
+      font-size: 14px; font-weight: 400;
+      letter-spacing: 0.06em; text-transform: uppercase;
+      cursor: pointer;
+      transition: all var(--ease);
+      animation: rise 0.6s 0.35s cubic-bezier(0.22,1,0.36,1) both;
+    }
+    .btn-back:hover { border-color: var(--gold); color: var(--gold); background: var(--gold-dim); }
+
+    @media (max-width: 480px) { .card { padding: 40px 22px 32px; } }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <div class="card">
+
+      <!-- Icon -->
+      <div class="icon-wrap">
+        <svg viewBox="0 0 24 24" fill="none" stroke="#c9a84c" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="12" cy="12" r="10"/>
+          <polyline points="12 6 12 12 16 14"/>
+        </svg>
+      </div>
+
+      <div class="brand-name">C.N. Johnson</div>
+
+      <h1>Account Pending Approval</h1>
+
+      <p class="subtitle">
+        Your account has been created successfully.<br>
+        An <strong>admin</strong> needs to approve it before you can sign in.
+      </p>
+
+      <!-- User email pill -->
+      <div class="user-pill" id="userPill">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+        <span id="pendingEmail">your account</span>
+      </div>
+
+      <!-- Steps -->
+      <div class="steps">
+        <div class="step">
+          <div class="step-dot done">✓</div>
+          <div class="step-text">
+            <div class="step-title">Account created</div>
+            <div class="step-desc">Your details have been saved</div>
+          </div>
+        </div>
+        <div class="step">
+          <div class="step-dot done pulse-dot">⏳</div>
+          <div class="step-text">
+            <div class="step-title">Awaiting admin review</div>
+            <div class="step-desc">An admin will approve or reject your request</div>
+          </div>
+        </div>
+        <div class="step">
+          <div class="step-dot wait">3</div>
+          <div class="step-text">
+            <div class="step-title muted">Sign in</div>
+            <div class="step-desc">Once approved, return to login</div>
+          </div>
+        </div>
+      </div>
+
+      <button class="btn-back" onclick="window.location.href='login.html'">
+        ← Back to Login
+      </button>
+
+    </div>
+  </div>
+
+  <script>
+  (() => {
+    // Show email if stored from signup
+    const auth = localStorage.getItem('cnj_pending_email');
+    if (auth) document.getElementById('pendingEmail').textContent = auth;
+
+    // Clean up any stale tokens (user isn't approved yet)
+    localStorage.removeItem('cnjohnson_access_token');
+    localStorage.removeItem('cnjohnson_auth');
+    localStorage.removeItem('cnjohnson_token_expiry');
+  })();
+  </script>
+</body>
+</html>

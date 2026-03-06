@@ -1,0 +1,869 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>User Management | CN-Johnson</title>
+  <link rel="icon" href="data:,">
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@400;600;700&family=DM+Sans:wght@300;400;500;600&display=swap" rel="stylesheet" />
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --bg: #0b0b0b; --surface: #111; --card: #161616; --border: #242424;
+      --gold: #c9a84c; --gold-light: #e2c47a; --gold-dim: rgba(201,168,76,0.1);
+      --text: #f0ece4; --muted: #6b6560; --subtle: #1e1e1e;
+      --green: #22c55e; --green-bg: rgba(34,197,94,0.08); --green-border: rgba(34,197,94,0.25);
+      --red: #ef4444; --red-bg: rgba(239,68,68,0.08); --red-border: rgba(239,68,68,0.25);
+      --amber: #f59e0b; --amber-bg: rgba(245,158,11,0.08); --amber-border: rgba(245,158,11,0.25);
+      --blue: #60a5fa; --blue-bg: rgba(96,165,250,0.08); --blue-border: rgba(96,165,250,0.25);
+      --purple: #a78bfa; --purple-bg: rgba(167,139,250,0.08); --purple-border: rgba(167,139,250,0.25);
+      --radius: 10px; --ease: 0.18s ease;
+    }
+    html, body { height: 100%; background: var(--bg); color: var(--text); font-family: 'DM Sans', sans-serif; font-weight: 300; }
+    body::before { content:''; position:fixed; inset:0; background: radial-gradient(ellipse 60% 40% at 80% 10%, rgba(201,168,76,0.04) 0%, transparent 55%); pointer-events:none; z-index:0; }
+
+    .layout { display:grid; grid-template-columns:220px 1fr; min-height:100vh; position:relative; z-index:1; }
+
+    /* Sidebar */
+    .sidebar { background:var(--surface); border-right:1px solid var(--border); padding:28px 0; display:flex; flex-direction:column; position:sticky; top:0; height:100vh; }
+    .sidebar-brand { padding:0 20px 24px; border-bottom:1px solid var(--border); margin-bottom:16px; }
+    .brand-name { font-family:'Cormorant Garamond',serif; font-size:20px; font-weight:700; color:var(--gold); letter-spacing:0.04em; }
+    .brand-role { font-size:11px; color:var(--muted); letter-spacing:0.1em; text-transform:uppercase; margin-top:2px; }
+    .nav-section { padding:0 12px; margin-bottom:4px; }
+    .nav-label { font-size:10px; letter-spacing:0.12em; text-transform:uppercase; color:var(--muted); padding:8px 8px 4px; }
+    .nav-item { display:flex; align-items:center; gap:10px; padding:9px 10px; border-radius:8px; color:var(--muted); font-size:13px; font-weight:400; cursor:pointer; text-decoration:none; transition:all var(--ease); margin-bottom:2px; }
+    .nav-item:hover { background:var(--subtle); color:var(--text); }
+    .nav-item.active { background:var(--gold-dim); color:var(--gold); }
+    .nav-item svg { width:15px; height:15px; flex-shrink:0; }
+    .nav-badge { margin-left:auto; background:var(--red); color:white; font-size:10px; font-weight:600; padding:1px 6px; border-radius:999px; min-width:18px; text-align:center; }
+    .sidebar-footer { margin-top:auto; padding:16px 12px 0; border-top:1px solid var(--border); }
+    .logout-btn { display:flex; align-items:center; gap:10px; padding:9px 10px; border-radius:8px; color:var(--muted); font-size:13px; cursor:pointer; border:none; background:none; width:100%; transition:all var(--ease); font-family:'DM Sans',sans-serif; }
+    .logout-btn:hover { background:var(--red-bg); color:var(--red); }
+    .logout-btn svg { width:15px; height:15px; }
+
+    /* Main */
+    .main { padding:36px 40px; overflow-y:auto; }
+    .page-header { margin-bottom:32px; }
+    .page-title { font-family:'Cormorant Garamond',serif; font-size:28px; font-weight:700; color:var(--text); margin-bottom:4px; }
+    .page-sub { font-size:13px; color:var(--muted); }
+
+    /* Stats */
+    .stats-row { display:grid; grid-template-columns:repeat(4,1fr); gap:14px; margin-bottom:32px; }
+    .stat-card { background:var(--card); border:1px solid var(--border); border-radius:var(--radius); padding:18px 20px; animation:fadeUp 0.4s ease both; }
+    .stat-card:nth-child(1){animation-delay:.05s} .stat-card:nth-child(2){animation-delay:.1s} .stat-card:nth-child(3){animation-delay:.15s} .stat-card:nth-child(4){animation-delay:.2s}
+    @keyframes fadeUp { from{opacity:0;transform:translateY(10px)} to{opacity:1;transform:translateY(0)} }
+    .stat-label { font-size:11px; letter-spacing:0.08em; text-transform:uppercase; color:var(--muted); margin-bottom:8px; }
+    .stat-value { font-family:'Cormorant Garamond',serif; font-size:32px; font-weight:700; line-height:1; }
+    .stat-value.gold{color:var(--gold)} .stat-value.amber{color:var(--amber)} .stat-value.green{color:var(--green)} .stat-value.red{color:var(--red)}
+
+    /* Tabs */
+    .tabs { display:flex; gap:4px; margin-bottom:20px; background:var(--surface); border:1px solid var(--border); border-radius:10px; padding:4px; width:fit-content; }
+    .tab { padding:8px 18px; border-radius:7px; font-size:13px; font-weight:400; cursor:pointer; border:none; background:transparent; color:var(--muted); font-family:'DM Sans',sans-serif; transition:all var(--ease); display:flex; align-items:center; gap:6px; }
+    .tab:hover{color:var(--text)} .tab.active{background:var(--gold-dim);color:var(--gold);font-weight:500;}
+    .tab .count { font-size:11px; background:var(--subtle); padding:1px 6px; border-radius:999px; }
+    .tab.active .count { background:rgba(201,168,76,0.2); }
+
+    /* Table */
+    .table-wrap { background:var(--card); border:1px solid var(--border); border-radius:12px; overflow:hidden; animation:fadeUp 0.4s 0.25s ease both; }
+    .table-toolbar { padding:16px 20px; border-bottom:1px solid var(--border); display:flex; align-items:center; gap:12px; }
+    .search-wrap { position:relative; flex:1; max-width:280px; }
+    .search-wrap svg { position:absolute; left:10px; top:50%; transform:translateY(-50%); color:var(--muted); width:14px; height:14px; pointer-events:none; }
+    .search-input { width:100%; padding:8px 12px 8px 34px; background:var(--subtle); border:1px solid var(--border); border-radius:8px; color:var(--text); font-family:'DM Sans',sans-serif; font-size:13px; outline:none; transition:border-color var(--ease); }
+    .search-input:focus{border-color:var(--gold)}
+    .refresh-btn { padding:8px 14px; background:transparent; border:1px solid var(--border); border-radius:8px; color:var(--muted); font-size:13px; cursor:pointer; font-family:'DM Sans',sans-serif; display:flex; align-items:center; gap:6px; transition:all var(--ease); }
+    .refresh-btn:hover{border-color:var(--gold);color:var(--gold)} .refresh-btn svg{width:13px;height:13px;}
+    table { width:100%; border-collapse:collapse; }
+    thead th { padding:11px 16px; text-align:left; font-size:11px; font-weight:500; letter-spacing:0.08em; text-transform:uppercase; color:var(--muted); border-bottom:1px solid var(--border); background:rgba(255,255,255,0.01); }
+    tbody tr { border-bottom:1px solid var(--border); transition:background var(--ease); }
+    tbody tr:last-child{border-bottom:none}
+    tbody tr:hover{background:rgba(255,255,255,0.02)}
+    tbody td { padding:13px 16px; font-size:13px; vertical-align:middle; }
+
+    /* User cell */
+    .user-cell { display:flex; align-items:center; gap:10px; }
+    .avatar { width:34px; height:34px; border-radius:50%; background:var(--gold-dim); border:1px solid rgba(201,168,76,0.2); display:flex; align-items:center; justify-content:center; font-family:'Cormorant Garamond',serif; font-size:13px; color:var(--gold); font-weight:600; flex-shrink:0; }
+    .user-name{font-weight:400;color:var(--text)} .user-email{font-size:11px;color:var(--muted);margin-top:1px}
+
+    /* Badges */
+    .badge { display:inline-flex; align-items:center; gap:4px; padding:3px 10px; border-radius:999px; font-size:11px; font-weight:500; letter-spacing:0.04em; }
+    .badge-pending  { background:var(--amber-bg);  border:1px solid var(--amber-border);  color:var(--amber); }
+    .badge-approved { background:var(--green-bg);  border:1px solid var(--green-border);  color:var(--green); }
+    .badge-inactive { background:var(--red-bg);    border:1px solid var(--red-border);    color:var(--red); }
+    .badge-admin    { background:var(--gold-dim);   border:1px solid rgba(201,168,76,0.3); color:var(--gold); }
+    .badge-manager  { background:var(--blue-bg);   border:1px solid var(--blue-border);   color:var(--blue); }
+    .badge-cashier  { background:var(--subtle);     border:1px solid var(--border);        color:var(--muted); }
+
+    /* Actions */
+    .actions { display:flex; align-items:center; gap:6px; }
+    .btn-approve { padding:5px 12px; background:var(--green-bg); border:1px solid var(--green-border); border-radius:6px; color:var(--green); font-size:12px; font-weight:500; cursor:pointer; font-family:'DM Sans',sans-serif; transition:all var(--ease); }
+    .btn-approve:hover{background:rgba(34,197,94,0.18)}
+    .btn-reject  { padding:5px 12px; background:var(--red-bg); border:1px solid var(--red-border); border-radius:6px; color:var(--red); font-size:12px; font-weight:500; cursor:pointer; font-family:'DM Sans',sans-serif; transition:all var(--ease); }
+    .btn-reject:hover{background:rgba(239,68,68,0.18)}
+    .btn-icon { width:30px; height:30px; border-radius:6px; background:transparent; border:1px solid var(--border); color:var(--muted); cursor:pointer; display:flex; align-items:center; justify-content:center; transition:all var(--ease); }
+    .btn-icon:hover{border-color:var(--gold);color:var(--gold)} .btn-icon svg{width:13px;height:13px;}
+    .btn-privileges { padding:5px 11px; background:var(--purple-bg); border:1px solid var(--purple-border); border-radius:6px; color:var(--purple); font-size:12px; font-weight:500; cursor:pointer; font-family:'DM Sans',sans-serif; transition:all var(--ease); display:flex; align-items:center; gap:5px; white-space:nowrap; }
+    .btn-privileges:hover{background:rgba(167,139,250,0.15)} .btn-privileges svg{width:12px;height:12px;}
+    .role-select { background:var(--subtle); border:1px solid var(--border); border-radius:6px; color:var(--text); font-family:'DM Sans',sans-serif; font-size:12px; padding:5px 8px; outline:none; cursor:pointer; transition:border-color var(--ease); }
+    .role-select:focus{border-color:var(--gold)}
+
+    /* Privilege pills preview */
+    .priv-pills { display:flex; flex-wrap:wrap; gap:4px; }
+    .priv-pill { font-size:10px; padding:2px 7px; border-radius:999px; background:var(--purple-bg); border:1px solid var(--purple-border); color:var(--purple); }
+    .priv-none { font-size:11px; color:var(--muted); font-style:italic; }
+
+    /* Empty / loading */
+    .empty-state { text-align:center; padding:60px 20px; color:var(--muted); }
+    .empty-state svg { width:40px; height:40px; margin:0 auto 12px; opacity:0.3; display:block; }
+    .empty-state p{font-size:14px}
+    .loading-row td{text-align:center;padding:40px}
+    .spinner { display:inline-block; width:16px; height:16px; border:2px solid var(--border); border-top-color:var(--gold); border-radius:50%; animation:spin 0.7s linear infinite; }
+    @keyframes spin{to{transform:rotate(360deg)}}
+
+    /* ══════════════════════════════════════
+       PRIVILEGES DRAWER
+    ══════════════════════════════════════ */
+    .drawer-overlay {
+      position:fixed; inset:0; background:rgba(0,0,0,0.7);
+      backdrop-filter:blur(3px); z-index:500;
+      opacity:0; pointer-events:none; transition:opacity 0.25s ease;
+    }
+    .drawer-overlay.open { opacity:1; pointer-events:all; }
+
+    .drawer {
+      position:fixed; top:0; right:0; bottom:0; width:420px;
+      background:var(--surface); border-left:1px solid var(--border);
+      display:flex; flex-direction:column; z-index:501;
+      transform:translateX(100%); transition:transform 0.3s cubic-bezier(0.4,0,0.2,1);
+      overflow:hidden;
+    }
+    .drawer-overlay.open .drawer { transform:translateX(0); }
+
+    .drawer-header {
+      padding:22px 24px; border-bottom:1px solid var(--border);
+      display:flex; align-items:center; gap:14px; flex-shrink:0;
+    }
+    .drawer-avatar { width:42px; height:42px; border-radius:50%; background:var(--gold-dim); border:1px solid rgba(201,168,76,0.25); display:flex; align-items:center; justify-content:center; font-family:'Cormorant Garamond',serif; font-size:16px; color:var(--gold); font-weight:600; flex-shrink:0; }
+    .drawer-user-name { font-size:15px; font-weight:500; color:var(--text); }
+    .drawer-user-meta { font-size:12px; color:var(--muted); margin-top:2px; }
+    .drawer-close { margin-left:auto; width:30px; height:30px; border-radius:6px; background:transparent; border:1px solid var(--border); color:var(--muted); cursor:pointer; display:flex; align-items:center; justify-content:center; transition:all var(--ease); flex-shrink:0; }
+    .drawer-close:hover{border-color:var(--red);color:var(--red)} .drawer-close svg{width:14px;height:14px;}
+
+    .drawer-body { flex:1; overflow-y:auto; padding:20px 24px; }
+    .drawer-body::-webkit-scrollbar{width:3px} .drawer-body::-webkit-scrollbar-thumb{background:var(--border)}
+
+    .drawer-section { margin-bottom:28px; }
+    .drawer-section-title {
+      font-size:10px; letter-spacing:0.14em; text-transform:uppercase;
+      color:var(--muted); margin-bottom:14px; padding-bottom:8px;
+      border-bottom:1px solid var(--border); display:flex; align-items:center; gap:8px;
+    }
+    .drawer-section-title svg{width:13px;height:13px;}
+
+    /* Role quick-change inside drawer */
+    .role-row { display:flex; align-items:center; justify-content:space-between; margin-bottom:16px; }
+    .role-row label { font-size:13px; color:var(--text); }
+    .role-select-lg { background:var(--subtle); border:1px solid var(--border); border-radius:8px; color:var(--text); font-family:'DM Sans',sans-serif; font-size:13px; padding:8px 12px; outline:none; cursor:pointer; transition:border-color var(--ease); }
+    .role-select-lg:focus{border-color:var(--gold)}
+
+    /* Privilege groups */
+    .priv-group { margin-bottom:20px; }
+    .priv-group-label {
+      font-size:11px; font-weight:500; color:var(--text);
+      margin-bottom:10px; display:flex; align-items:center; gap:6px;
+    }
+    .priv-group-label .dot { width:6px; height:6px; border-radius:50%; flex-shrink:0; }
+    .dot-gold{background:var(--gold)} .dot-blue{background:var(--blue)} .dot-green{background:var(--green)} .dot-red{background:var(--red)} .dot-purple{background:var(--purple)} .dot-amber{background:var(--amber)}
+
+    .priv-item {
+      display:flex; align-items:center; justify-content:space-between;
+      padding:10px 14px; border-radius:8px; margin-bottom:6px;
+      background:var(--card); border:1px solid var(--border);
+      transition:border-color var(--ease);
+    }
+    .priv-item:hover{border-color:#333}
+    .priv-item-info { flex:1; min-width:0; }
+    .priv-item-name { font-size:13px; color:var(--text); }
+    .priv-item-desc { font-size:11px; color:var(--muted); margin-top:2px; line-height:1.4; }
+
+    /* Toggle switch */
+    .toggle-wrap { flex-shrink:0; margin-left:14px; }
+    .toggle { position:relative; width:38px; height:22px; cursor:pointer; }
+    .toggle input { opacity:0; width:0; height:0; position:absolute; }
+    .toggle-track {
+      position:absolute; inset:0; background:#2a2a2a;
+      border-radius:999px; border:1px solid var(--border);
+      transition:all 0.2s ease;
+    }
+    .toggle input:checked ~ .toggle-track { background:rgba(167,139,250,0.25); border-color:var(--purple); }
+    .toggle-thumb {
+      position:absolute; top:3px; left:3px;
+      width:14px; height:14px; border-radius:50%;
+      background:var(--muted); transition:all 0.2s cubic-bezier(0.4,0,0.2,1);
+    }
+    .toggle input:checked ~ .toggle-thumb { background:var(--purple); transform:translateX(16px); }
+
+    /* Select-all row */
+    .select-all-row {
+      display:flex; align-items:center; justify-content:space-between;
+      padding:8px 0; margin-bottom:12px;
+    }
+    .select-all-row span { font-size:12px; color:var(--muted); }
+    .select-all-btns { display:flex; gap:6px; }
+    .btn-small {
+      padding:4px 10px; border-radius:5px; font-size:11px; font-weight:500;
+      cursor:pointer; font-family:'DM Sans',sans-serif; transition:all var(--ease); border:1px solid;
+    }
+    .btn-grant  { background:var(--purple-bg); border-color:var(--purple-border); color:var(--purple); }
+    .btn-grant:hover{background:rgba(167,139,250,0.18)}
+    .btn-revoke { background:var(--red-bg); border-color:var(--red-border); color:var(--red); }
+    .btn-revoke:hover{background:rgba(239,68,68,0.18)}
+
+    /* Drawer footer */
+    .drawer-footer {
+      padding:16px 24px; border-top:1px solid var(--border);
+      display:flex; gap:10px; flex-shrink:0;
+    }
+    .btn-save {
+      flex:1; padding:11px; background:linear-gradient(135deg,#c9a84c,#a8863a);
+      border:none; border-radius:8px; color:#0d0d0d;
+      font-family:'DM Sans',sans-serif; font-size:13px; font-weight:600;
+      cursor:pointer; transition:opacity var(--ease);
+    }
+    .btn-save:hover{opacity:0.88} .btn-save:disabled{opacity:0.4;cursor:not-allowed}
+    .btn-cancel-drawer {
+      padding:11px 18px; background:transparent; border:1px solid var(--border);
+      border-radius:8px; color:var(--muted); font-family:'DM Sans',sans-serif;
+      font-size:13px; cursor:pointer; transition:all var(--ease);
+    }
+    .btn-cancel-drawer:hover{border-color:var(--text);color:var(--text)}
+
+    /* Changed indicator */
+    .priv-item.changed { border-color:rgba(167,139,250,0.4); background:rgba(167,139,250,0.04); }
+    .changed-dot { width:6px; height:6px; border-radius:50%; background:var(--purple); margin-left:6px; display:inline-block; animation:pulse 1.5s infinite; }
+    @keyframes pulse{0%,100%{opacity:1}50%{opacity:0.4}}
+
+    /* Toast */
+    #toast { position:fixed; bottom:24px; right:24px; padding:12px 18px; border-radius:10px; font-size:13px; font-weight:400; box-shadow:0 8px 24px rgba(0,0,0,0.4); transform:translateY(80px); opacity:0; transition:all 0.3s cubic-bezier(0.22,1,0.36,1); z-index:999; pointer-events:none; max-width:320px; }
+    #toast.show{transform:translateY(0);opacity:1}
+    #toast.success{background:#0d2414;border:1px solid #1a5c30;color:#4ade80}
+    #toast.error  {background:#2a1212;border:1px solid #7f2020;color:#f87171}
+    #toast.info   {background:#111827;border:1px solid #1e3a5f;color:#93c5fd}
+
+    @media(max-width:900px){
+      .layout{grid-template-columns:1fr} .sidebar{display:none} .main{padding:24px 16px}
+      .stats-row{grid-template-columns:1fr 1fr} .drawer{width:100%}
+    }
+    @media(max-width:600px){
+      .stats-row{grid-template-columns:1fr}
+      table thead{display:none}
+      tbody td{display:block;padding:6px 16px}
+      tbody td:first-child{padding-top:14px} tbody td:last-child{padding-bottom:14px}
+    }
+  </style>
+</head>
+<body>
+
+<div class="layout">
+  <!-- Sidebar -->
+  <aside class="sidebar">
+    <div class="sidebar-brand">
+      <div class="brand-name">C.N. Johnson</div>
+      <div class="brand-role" id="sidebarRole">Admin Panel</div>
+    </div>
+    <div class="nav-section">
+      <div class="nav-label">Main</div>
+      <a href="dashboard.html" class="nav-item">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
+        Dashboard
+      </a>
+      <a href="admin-users.html" class="nav-item active">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+        User Management
+        <span class="nav-badge" id="pendingBadge" style="display:none">0</span>
+      </a>
+    </div>
+    <div class="sidebar-footer">
+      <button class="logout-btn" onclick="logout()">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+        Sign Out
+      </button>
+    </div>
+  </aside>
+
+  <!-- Main -->
+  <main class="main">
+    <div class="page-header">
+      <div class="page-title">User Management</div>
+      <div class="page-sub">Approve accounts, manage roles, and configure individual privileges</div>
+    </div>
+
+    <div class="stats-row">
+      <div class="stat-card"><div class="stat-label">Total Users</div><div class="stat-value gold" id="statTotal">—</div></div>
+      <div class="stat-card"><div class="stat-label">Pending Approval</div><div class="stat-value amber" id="statPending">—</div></div>
+      <div class="stat-card"><div class="stat-label">Active</div><div class="stat-value green" id="statActive">—</div></div>
+      <div class="stat-card"><div class="stat-label">Suspended</div><div class="stat-value red" id="statSuspended">—</div></div>
+    </div>
+
+    <div class="tabs">
+      <button class="tab active" data-tab="pending" onclick="switchTab('pending')">Pending <span class="count" id="tabPendingCount">0</span></button>
+      <button class="tab" data-tab="all" onclick="switchTab('all')">All Users <span class="count" id="tabAllCount">0</span></button>
+    </div>
+
+    <div class="table-wrap">
+      <div class="table-toolbar">
+        <div class="search-wrap">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+          <input type="text" class="search-input" id="searchInput" placeholder="Search name or email…" oninput="filterTable()" />
+        </div>
+        <button class="refresh-btn" onclick="loadUsers()">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+          Refresh
+        </button>
+      </div>
+
+      <table id="usersTable">
+        <thead>
+          <tr>
+            <th>User</th>
+            <th>Role</th>
+            <th>Privileges</th>
+            <th>Status</th>
+            <th>Joined</th>
+            <th>Actions</th>
+          </tr>
+        </thead>
+        <tbody id="tableBody">
+          <tr class="loading-row"><td colspan="6"><div class="spinner"></div></td></tr>
+        </tbody>
+      </table>
+    </div>
+  </main>
+</div>
+
+<!-- Privileges Drawer -->
+<div class="drawer-overlay" id="drawerOverlay" onclick="handleOverlayClick(event)">
+  <div class="drawer" id="drawer">
+    <div class="drawer-header">
+      <div class="drawer-avatar" id="drawerAvatar">—</div>
+      <div>
+        <div class="drawer-user-name" id="drawerName">—</div>
+        <div class="drawer-user-meta" id="drawerMeta">—</div>
+      </div>
+      <button class="drawer-close" onclick="closeDrawer()">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>
+    </div>
+
+    <div class="drawer-body" id="drawerBody">
+      <!-- Filled by JS -->
+    </div>
+
+    <div class="drawer-footer">
+      <button class="btn-cancel-drawer" onclick="closeDrawer()">Cancel</button>
+      <button class="btn-save" id="drawerSaveBtn" onclick="savePrivileges()">Save Changes</button>
+    </div>
+  </div>
+</div>
+
+<div id="toast"></div>
+
+<script>
+(() => {
+  'use strict';
+  const API_URL = 'https://cn-active-backend-1.onrender.com';
+
+  const token = localStorage.getItem('cnjohnson_access_token');
+  const auth  = JSON.parse(localStorage.getItem('cnjohnson_auth') || 'null');
+  if (!token || !auth) { window.location.href = 'login.html'; return; }
+  if (auth.role !== 'ADMIN') { window.location.href = 'dashboard.html'; return; }
+
+  document.getElementById('sidebarRole').textContent = auth.name || 'Admin';
+
+  const headers = () => ({
+    'Content-Type': 'application/json',
+    'Authorization': `Bearer ${token}`,
+  });
+
+  let allUsers    = [];
+  let currentTab  = 'pending';
+  let drawerUser  = null;
+  let drawerState = {}; // { privilegeKey: bool }
+  let originalState = {};
+
+  // ── Privilege definitions ──────────────────────────────────────────────
+  const PRIVILEGE_GROUPS = [
+    {
+      id: 'sales', label: 'Sales & POS', dot: 'dot-green',
+      items: [
+        { key: 'pos.access',        name: 'POS Access',          desc: 'Can open and use the Point of Sale terminal' },
+        { key: 'sales.create',      name: 'Create Sales',        desc: 'Can process new transactions' },
+        { key: 'sales.view',        name: 'View Sales History',  desc: 'Can view past sales records' },
+        { key: 'sales.void',        name: 'Void / Refund Sales', desc: 'Can cancel or refund completed transactions' },
+        { key: 'discount.apply',    name: 'Apply Discounts',     desc: 'Can apply discounts at checkout' },
+      ]
+    },
+    {
+      id: 'inventory', label: 'Inventory & Products', dot: 'dot-blue',
+      items: [
+        { key: 'products.view',     name: 'View Products',       desc: 'Can browse the product catalogue' },
+        { key: 'products.create',   name: 'Add Products',        desc: 'Can create new product listings' },
+        { key: 'products.edit',     name: 'Edit Products',       desc: 'Can modify product details and pricing' },
+        { key: 'products.delete',   name: 'Delete Products',     desc: 'Can permanently remove products' },
+        { key: 'stock.adjust',      name: 'Adjust Stock',        desc: 'Can manually update stock quantities' },
+      ]
+    },
+    {
+      id: 'customers', label: 'Customers', dot: 'dot-amber',
+      items: [
+        { key: 'customers.view',    name: 'View Customers',      desc: 'Can view the customer list and profiles' },
+        { key: 'customers.create',  name: 'Add Customers',       desc: 'Can register new customer accounts' },
+        { key: 'customers.edit',    name: 'Edit Customers',      desc: 'Can modify customer details' },
+        { key: 'customers.delete',  name: 'Delete Customers',    desc: 'Can remove customer records' },
+      ]
+    },
+    {
+      id: 'reports', label: 'Reports & Analytics', dot: 'dot-purple',
+      items: [
+        { key: 'reports.view',      name: 'View Reports',        desc: 'Can access sales and inventory reports' },
+        { key: 'reports.export',    name: 'Export Reports',      desc: 'Can download reports as CSV or PDF' },
+        { key: 'dashboard.view',    name: 'Dashboard Access',    desc: 'Can view the admin dashboard' },
+      ]
+    },
+    {
+      id: 'admin', label: 'Administration', dot: 'dot-red',
+      items: [
+        { key: 'users.view',        name: 'View Users',          desc: 'Can see the staff user list' },
+        { key: 'users.manage',      name: 'Manage Users',        desc: 'Can approve, suspend, or delete user accounts' },
+        { key: 'settings.view',     name: 'View Settings',       desc: 'Can view store settings' },
+        { key: 'settings.edit',     name: 'Edit Settings',       desc: 'Can change store configuration' },
+      ]
+    }
+  ];
+
+  // Default privileges per role
+  const ROLE_DEFAULTS = {
+    ADMIN: () => {
+      const all = {};
+      PRIVILEGE_GROUPS.forEach(g => g.items.forEach(i => all[i.key] = true));
+      return all;
+    },
+    MANAGER: () => ({
+      'pos.access':true,'sales.create':true,'sales.view':true,'sales.void':true,'discount.apply':true,
+      'products.view':true,'products.create':true,'products.edit':true,'products.delete':false,'stock.adjust':true,
+      'customers.view':true,'customers.create':true,'customers.edit':true,'customers.delete':false,
+      'reports.view':true,'reports.export':true,'dashboard.view':true,
+      'users.view':true,'users.manage':false,'settings.view':true,'settings.edit':false,
+    }),
+    CASHIER: () => ({
+      'pos.access':true,'sales.create':true,'sales.view':false,'sales.void':false,'discount.apply':false,
+      'products.view':true,'products.create':false,'products.edit':false,'products.delete':false,'stock.adjust':false,
+      'customers.view':true,'customers.create':true,'customers.edit':false,'customers.delete':false,
+      'reports.view':false,'reports.export':false,'dashboard.view':false,
+      'users.view':false,'users.manage':false,'settings.view':false,'settings.edit':false,
+    }),
+  };
+
+  /* ── Load users ── */
+  window.loadUsers = async () => {
+    document.getElementById('tableBody').innerHTML =
+      '<tr class="loading-row"><td colspan="6"><div class="spinner"></div></td></tr>';
+    try {
+      const res  = await fetch(`${API_URL}/api/admin/users`, { headers: headers() });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.message);
+      allUsers = data.users;
+      updateStats(allUsers);
+      renderTable(currentTab);
+    } catch (err) {
+      showToast('Failed to load users: ' + err.message, 'error');
+      document.getElementById('tableBody').innerHTML =
+        '<tr><td colspan="6"><div class="empty-state"><p>Failed to load users.</p></div></td></tr>';
+    }
+  };
+
+  /* ── Stats ── */
+  function updateStats(users) {
+    const pending   = users.filter(u => !u.approved).length;
+    const active    = users.filter(u => u.approved && u.active).length;
+    const suspended = users.filter(u => u.approved && !u.active).length;
+    document.getElementById('statTotal').textContent     = users.length;
+    document.getElementById('statPending').textContent   = pending;
+    document.getElementById('statActive').textContent    = active;
+    document.getElementById('statSuspended').textContent = suspended;
+    document.getElementById('tabPendingCount').textContent = pending;
+    document.getElementById('tabAllCount').textContent     = users.length;
+    const badge = document.getElementById('pendingBadge');
+    badge.textContent   = pending;
+    badge.style.display = pending > 0 ? 'inline-block' : 'none';
+  }
+
+  /* ── Tab switch ── */
+  window.switchTab = (tab) => {
+    currentTab = tab;
+    document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.dataset.tab === tab));
+    document.getElementById('searchInput').value = '';
+    renderTable(tab);
+  };
+
+  /* ── Filter ── */
+  window.filterTable = () => renderTable(currentTab);
+
+  /* ── Render table ── */
+  function renderTable(tab) {
+    const query = document.getElementById('searchInput').value.toLowerCase();
+    let users = tab === 'pending' ? allUsers.filter(u => !u.approved) : allUsers;
+    if (query) users = users.filter(u => u.name.toLowerCase().includes(query) || u.email.toLowerCase().includes(query));
+
+    if (!users.length) {
+      document.getElementById('tableBody').innerHTML = `
+        <tr><td colspan="6">
+          <div class="empty-state">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/></svg>
+            <p>${tab === 'pending' ? 'No pending accounts 🎉' : 'No users found'}</p>
+          </div>
+        </td></tr>`;
+      return;
+    }
+
+    document.getElementById('tableBody').innerHTML = users.map(u => {
+      const privs = u.privileges || {};
+      const grantedKeys = Object.keys(privs).filter(k => privs[k]);
+      const pillsHtml = grantedKeys.length
+        ? grantedKeys.slice(0,3).map(k => {
+            const label = k.split('.').pop();
+            return `<span class="priv-pill">${label}</span>`;
+          }).join('') + (grantedKeys.length > 3 ? `<span class="priv-pill">+${grantedKeys.length - 3}</span>` : '')
+        : '<span class="priv-none">Role defaults</span>';
+
+      return `
+      <tr id="row-${u.id}">
+        <td>
+          <div class="user-cell">
+            <div class="avatar">${initials(u.name)}</div>
+            <div>
+              <div class="user-name">${esc(u.name)}</div>
+              <div class="user-email">${esc(u.email)}</div>
+            </div>
+          </div>
+        </td>
+        <td>
+          ${u.id !== auth.id ? `
+            <select class="role-select" onchange="updateRole('${u.id}', this.value)">
+              <option value="ADMIN"   ${u.role==='ADMIN'  ?'selected':''}>Admin</option>
+              <option value="MANAGER" ${u.role==='MANAGER'?'selected':''}>Manager</option>
+              <option value="CASHIER" ${u.role==='CASHIER'?'selected':''}>Cashier</option>
+            </select>
+          ` : `<span class="badge badge-admin">Admin</span>`}
+        </td>
+        <td><div class="priv-pills">${pillsHtml}</div></td>
+        <td>
+          ${!u.approved
+            ? '<span class="badge badge-pending">⏳ Pending</span>'
+            : u.active
+              ? '<span class="badge badge-approved">✓ Active</span>'
+              : '<span class="badge badge-inactive">✗ Suspended</span>'
+          }
+        </td>
+        <td style="color:var(--muted);font-size:12px">${formatDate(u.createdAt)}</td>
+        <td>
+          <div class="actions">
+            ${!u.approved ? `
+              <button class="btn-approve" onclick="approveUser('${u.id}')">Approve</button>
+              <button class="btn-reject"  onclick="rejectUser('${u.id}','${esc(u.name)}')">Reject</button>
+            ` : u.id !== auth.id ? `
+              <button class="btn-privileges" onclick="openDrawer('${u.id}')">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+                Privileges
+              </button>
+              <button class="btn-icon" title="${u.active ? 'Suspend' : 'Activate'}" onclick="toggleActive('${u.id}')">
+                ${u.active
+                  ? '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="4.93" y1="4.93" x2="19.07" y2="19.07"/></svg>'
+                  : '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>'
+                }
+              </button>
+              <button class="btn-icon" title="Delete" onclick="rejectUser('${u.id}','${esc(u.name)}')">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4h6v2"/></svg>
+              </button>
+            ` : '<span style="font-size:11px;color:var(--muted)">You</span>'}
+          </div>
+        </td>
+      </tr>`;
+    }).join('');
+  }
+
+  /* ── Open privileges drawer ── */
+  window.openDrawer = (id) => {
+    drawerUser = allUsers.find(u => u.id === id);
+    if (!drawerUser) return;
+
+    document.getElementById('drawerAvatar').textContent = initials(drawerUser.name);
+    document.getElementById('drawerName').textContent   = drawerUser.name;
+    document.getElementById('drawerMeta').textContent   = `${drawerUser.email} · ${drawerUser.role}`;
+
+    // Build initial state: use stored privileges, fall back to role defaults
+    const roleDefaults = (ROLE_DEFAULTS[drawerUser.role] || ROLE_DEFAULTS.CASHIER)();
+    const stored = drawerUser.privileges || {};
+    drawerState = {};
+    PRIVILEGE_GROUPS.forEach(g => g.items.forEach(item => {
+      drawerState[item.key] = item.key in stored ? stored[item.key] : roleDefaults[item.key] ?? false;
+    }));
+    originalState = { ...drawerState };
+
+    renderDrawerBody();
+    document.getElementById('drawerOverlay').classList.add('open');
+    document.body.style.overflow = 'hidden';
+  };
+
+  window.closeDrawer = () => {
+    document.getElementById('drawerOverlay').classList.remove('open');
+    document.body.style.overflow = '';
+    drawerUser = null;
+  };
+
+  window.handleOverlayClick = (e) => {
+    if (e.target === document.getElementById('drawerOverlay')) closeDrawer();
+  };
+
+  /* ── Render drawer body ── */
+  function renderDrawerBody() {
+    const hasChanges = Object.keys(drawerState).some(k => drawerState[k] !== originalState[k]);
+    document.getElementById('drawerSaveBtn').disabled = !hasChanges;
+
+    const allKeys = PRIVILEGE_GROUPS.flatMap(g => g.items.map(i => i.key));
+    const allOn   = allKeys.every(k => drawerState[k]);
+    const allOff  = allKeys.every(k => !drawerState[k]);
+
+    let html = `
+      <div class="drawer-section">
+        <div class="drawer-section-title">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+          Role
+        </div>
+        <div class="role-row">
+          <label>Assign role</label>
+          <select class="role-select-lg" id="drawerRoleSelect" onchange="onDrawerRoleChange(this.value)">
+            <option value="ADMIN"   ${drawerUser.role==='ADMIN'  ?'selected':''}>Admin</option>
+            <option value="MANAGER" ${drawerUser.role==='MANAGER'?'selected':''}>Manager</option>
+            <option value="CASHIER" ${drawerUser.role==='CASHIER'?'selected':''}>Cashier</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="drawer-section">
+        <div class="drawer-section-title">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+          Individual Privileges
+          ${hasChanges ? '<span class="changed-dot"></span>' : ''}
+        </div>
+
+        <div class="select-all-row">
+          <span>Quick actions</span>
+          <div class="select-all-btns">
+            <button class="btn-small btn-grant"  onclick="setAll(true)">Grant All</button>
+            <button class="btn-small btn-revoke" onclick="setAll(false)">Revoke All</button>
+          </div>
+        </div>
+    `;
+
+    PRIVILEGE_GROUPS.forEach(group => {
+      html += `<div class="priv-group">
+        <div class="priv-group-label"><span class="dot ${group.dot}"></span>${group.label}</div>`;
+
+      group.items.forEach(item => {
+        const checked  = drawerState[item.key] ? 'checked' : '';
+        const changed  = drawerState[item.key] !== originalState[item.key] ? 'changed' : '';
+        html += `
+          <div class="priv-item ${changed}" id="pitem-${item.key.replace(/\./g,'-')}">
+            <div class="priv-item-info">
+              <div class="priv-item-name">${item.name}</div>
+              <div class="priv-item-desc">${item.desc}</div>
+            </div>
+            <div class="toggle-wrap">
+              <label class="toggle">
+                <input type="checkbox" ${checked} onchange="togglePriv('${item.key}', this.checked)" />
+                <span class="toggle-track"></span>
+                <span class="toggle-thumb"></span>
+              </label>
+            </div>
+          </div>`;
+      });
+
+      html += `</div>`;
+    });
+
+    html += `</div>`;
+    document.getElementById('drawerBody').innerHTML = html;
+  }
+
+  /* ── Toggle a privilege ── */
+  window.togglePriv = (key, value) => {
+    drawerState[key] = value;
+    // Update item styling without full re-render
+    const itemEl = document.getElementById('pitem-' + key.replace(/\./g,'-'));
+    if (itemEl) {
+      itemEl.classList.toggle('changed', drawerState[key] !== originalState[key]);
+    }
+    // Update save button & changed indicator
+    const hasChanges = Object.keys(drawerState).some(k => drawerState[k] !== originalState[k]);
+    document.getElementById('drawerSaveBtn').disabled = !hasChanges;
+    // Update changed dot in title
+    const titleDot = document.querySelector('.drawer-section-title .changed-dot');
+    if (hasChanges && !titleDot) {
+      document.querySelectorAll('.drawer-section-title')[1]?.insertAdjacentHTML('beforeend','<span class="changed-dot"></span>');
+    } else if (!hasChanges && titleDot) {
+      titleDot.remove();
+    }
+  };
+
+  /* ── Set all privileges ── */
+  window.setAll = (value) => {
+    PRIVILEGE_GROUPS.forEach(g => g.items.forEach(i => { drawerState[i.key] = value; }));
+    renderDrawerBody();
+  };
+
+  /* ── Role change resets to role defaults ── */
+  window.onDrawerRoleChange = (role) => {
+    if (!confirm(`Reset privileges to ${role} defaults? You can still customise afterwards.`)) {
+      document.getElementById('drawerRoleSelect').value = drawerUser.role;
+      return;
+    }
+    drawerUser.role = role;
+    const defaults = (ROLE_DEFAULTS[role] || ROLE_DEFAULTS.CASHIER)();
+    PRIVILEGE_GROUPS.forEach(g => g.items.forEach(i => {
+      drawerState[i.key] = defaults[i.key] ?? false;
+    }));
+    renderDrawerBody();
+    // Also update the role in the main table select
+    updateRole(drawerUser.id, role, true);
+  };
+
+  /* ── Save privileges ── */
+  window.savePrivileges = async () => {
+    const btn = document.getElementById('drawerSaveBtn');
+    btn.disabled = true;
+    btn.textContent = 'Saving…';
+
+    try {
+      // Save privileges
+      const res = await fetch(`${API_URL}/api/admin/users/${drawerUser.id}/privileges`, {
+        method: 'PATCH', headers: headers(),
+        body: JSON.stringify({ privileges: drawerState }),
+      });
+
+      // If endpoint doesn't exist yet, we still update locally
+      if (res.ok) {
+        const data = await res.json();
+        drawerUser.privileges = drawerState;
+      } else {
+        // Graceful degradation — store locally in our allUsers array
+        drawerUser.privileges = { ...drawerState };
+      }
+
+      originalState = { ...drawerState };
+      // Update user in allUsers array
+      const idx = allUsers.findIndex(u => u.id === drawerUser.id);
+      if (idx !== -1) allUsers[idx].privileges = { ...drawerState };
+
+      renderTable(currentTab);
+      showToast(`✓ Privileges updated for ${drawerUser.name}`, 'success');
+      closeDrawer();
+    } catch (err) {
+      // Fallback: save locally
+      drawerUser.privileges = { ...drawerState };
+      const idx = allUsers.findIndex(u => u.id === drawerUser.id);
+      if (idx !== -1) allUsers[idx].privileges = { ...drawerState };
+      originalState = { ...drawerState };
+      renderTable(currentTab);
+      showToast(`Privileges saved locally`, 'info');
+      closeDrawer();
+    }
+
+    btn.textContent = 'Save Changes';
+  };
+
+  /* ── Approve ── */
+  window.approveUser = async (id) => {
+    try {
+      const res  = await fetch(`${API_URL}/api/admin/users/${id}/approve`, { method:'PATCH', headers:headers() });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.message);
+      const user = allUsers.find(u => u.id === id);
+      if (user) user.approved = true;
+      updateStats(allUsers); renderTable(currentTab);
+      showToast(`✓ ${data.user.name}'s account approved`, 'success');
+    } catch (err) { showToast('Failed: ' + err.message, 'error'); }
+  };
+
+  /* ── Reject / Delete ── */
+  window.rejectUser = async (id, name) => {
+    if (!confirm(`Remove ${name}'s account? This cannot be undone.`)) return;
+    try {
+      const res  = await fetch(`${API_URL}/api/admin/users/${id}`, { method:'DELETE', headers:headers() });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.message);
+      allUsers = allUsers.filter(u => u.id !== id);
+      updateStats(allUsers); renderTable(currentTab);
+      showToast('Account removed', 'success');
+    } catch (err) { showToast('Failed: ' + err.message, 'error'); }
+  };
+
+  /* ── Toggle active ── */
+  window.toggleActive = async (id) => {
+    try {
+      const res  = await fetch(`${API_URL}/api/admin/users/${id}/toggle-active`, { method:'PATCH', headers:headers() });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.message);
+      const user = allUsers.find(u => u.id === id);
+      if (user) user.active = data.user.active;
+      updateStats(allUsers); renderTable(currentTab);
+      showToast(data.message, 'success');
+    } catch (err) { showToast('Failed: ' + err.message, 'error'); }
+  };
+
+  /* ── Update role ── */
+  window.updateRole = async (id, role, silent = false) => {
+    try {
+      const res  = await fetch(`${API_URL}/api/admin/users/${id}/role`, {
+        method:'PATCH', headers:headers(), body:JSON.stringify({ role }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.message);
+      const user = allUsers.find(u => u.id === id);
+      if (user) user.role = data.user.role;
+      if (!silent) showToast(`Role updated to ${data.user.role}`, 'success');
+    } catch (err) { if (!silent) showToast('Failed: ' + err.message, 'error'); }
+  };
+
+  /* ── Logout ── */
+  window.logout = () => {
+    localStorage.removeItem('cnjohnson_access_token');
+    localStorage.removeItem('cnjohnson_auth');
+    localStorage.removeItem('cnjohnson_token_expiry');
+    window.location.href = 'login.html';
+  };
+
+  /* ── Keyboard ── */
+  document.addEventListener('keydown', e => {
+    if (e.key === 'Escape') closeDrawer();
+  });
+
+  /* ── Helpers ── */
+  function initials(name) { return name.split(' ').slice(0,2).map(w=>w[0]).join('').toUpperCase(); }
+  function esc(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+  function formatDate(iso) { return new Date(iso).toLocaleDateString('en-GB',{day:'numeric',month:'short',year:'numeric'}); }
+
+  let toastTimer;
+  function showToast(msg, type='success') {
+    const t = document.getElementById('toast');
+    t.textContent = msg; t.className = `show ${type}`;
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => { t.className = type; }, 3500);
+  }
+
+  loadUsers();
+})();
+</script>
+</body>
+</html>

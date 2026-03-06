@@ -1,0 +1,225 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Login | CN-Johnson</title>
+  <link rel="icon" href="data:,">
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@400;600;700&family=DM+Sans:wght@300;400;500&display=swap" rel="stylesheet" />
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --bg: #0d0d0d; --card: #141414; --border: #2a2a2a;
+      --border-focus: #c9a84c; --gold: #c9a84c; --gold-light: #e2c47a;
+      --gold-dim: rgba(201,168,76,0.12); --text: #f0ece4; --muted: #7a7570;
+      --error-bg: #2a1212; --error-border: #7f2020; --error-text: #f87171;
+      --warn-bg: #2a1f0a; --warn-border: #7a5c1a; --warn-text: #fbbf24;
+      --success-bg: #0d2414; --success-border: #1a5c30; --success-text: #4ade80;
+      --radius: 10px; --ease: 0.2s ease;
+    }
+    html, body { height: 100%; background: var(--bg); color: var(--text); font-family: 'DM Sans', sans-serif; font-weight: 300; }
+    body::before { content:''; position:fixed; inset:0; background: radial-gradient(ellipse 70% 50% at 15% 15%, rgba(201,168,76,0.07) 0%, transparent 55%), radial-gradient(ellipse 50% 70% at 85% 85%, rgba(201,168,76,0.05) 0%, transparent 55%); pointer-events:none; z-index:0; }
+    body::after { content:''; position:fixed; inset:0; background-image: linear-gradient(rgba(201,168,76,0.03) 1px, transparent 1px), linear-gradient(90deg, rgba(201,168,76,0.03) 1px, transparent 1px); background-size:40px 40px; pointer-events:none; z-index:0; }
+    .page { min-height:100vh; display:flex; align-items:center; justify-content:center; padding:32px 16px; position:relative; z-index:1; }
+
+    .card { width:100%; max-width:400px; background:var(--card); border:1px solid var(--border); border-radius:18px; padding:44px 38px 38px; box-shadow:0 32px 80px rgba(0,0,0,0.7), 0 0 0 1px rgba(201,168,76,0.07), inset 0 1px 0 rgba(255,255,255,0.04); animation:rise 0.55s cubic-bezier(0.22,1,0.36,1) both; }
+    @keyframes rise { from { opacity:0; transform:translateY(24px) scale(0.97); } to { opacity:1; transform:translateY(0) scale(1); } }
+
+    .brand { text-align:center; margin-bottom:32px; }
+    .brand-logo { display:inline-flex; align-items:center; justify-content:center; width:52px; height:52px; border:1px solid rgba(201,168,76,0.3); border-radius:14px; margin-bottom:14px; background:var(--gold-dim); }
+    .brand-logo svg { width:26px; height:26px; }
+    .brand-name { font-family:'Cormorant Garamond',serif; font-size:26px; font-weight:700; letter-spacing:0.05em; color:var(--gold); line-height:1; margin-bottom:5px; }
+    .brand-sub { font-size:12px; color:var(--muted); letter-spacing:0.12em; text-transform:uppercase; }
+
+    .divider { height:1px; background:linear-gradient(90deg,transparent,var(--border),transparent); margin:0 -38px 28px; }
+
+    .role-label { font-size:11px; font-weight:500; letter-spacing:0.1em; text-transform:uppercase; color:var(--muted); margin-bottom:8px; display:block; }
+    .role-row { display:grid; grid-template-columns:1fr 1fr 1fr; gap:6px; margin-bottom:24px; }
+    .role-btn { padding:10px 0; border:1px solid var(--border); border-radius:8px; background:transparent; color:var(--muted); font-family:'DM Sans',sans-serif; font-size:12px; font-weight:400; letter-spacing:0.05em; cursor:pointer; transition:all var(--ease); text-transform:uppercase; position:relative; overflow:hidden; }
+    .role-btn::before { content:''; position:absolute; inset:0; background:var(--gold-dim); opacity:0; transition:opacity var(--ease); }
+    .role-btn:hover { border-color:var(--gold); color:var(--gold); }
+    .role-btn:hover::before { opacity:1; }
+    .role-btn.active { border-color:var(--gold); color:var(--gold-light); font-weight:500; }
+    .role-btn.active::before { opacity:1; }
+    .role-btn.active::after { content:''; position:absolute; bottom:5px; left:50%; transform:translateX(-50%); width:4px; height:4px; background:var(--gold); border-radius:50%; }
+
+    .field { margin-bottom:16px; }
+    .field label { display:block; font-size:11px; font-weight:500; letter-spacing:0.1em; text-transform:uppercase; color:var(--muted); margin-bottom:7px; }
+    .field input { width:100%; padding:12px 14px; background:rgba(255,255,255,0.03); border:1px solid var(--border); border-radius:var(--radius); color:var(--text); font-family:'DM Sans',sans-serif; font-size:14px; font-weight:300; outline:none; transition:border-color var(--ease),box-shadow var(--ease),background var(--ease); -webkit-appearance:none; }
+    .field input::placeholder { color:#3a3630; }
+    .field input:focus { border-color:var(--border-focus); background:rgba(201,168,76,0.04); box-shadow:0 0 0 3px rgba(201,168,76,0.1); }
+
+    .pass-wrap { position:relative; }
+    .pass-wrap input { padding-right:44px; }
+    .toggle-pass { position:absolute; right:13px; top:50%; transform:translateY(-50%); background:none; border:none; cursor:pointer; color:var(--muted); padding:0; line-height:1; transition:color var(--ease); }
+    .toggle-pass:hover { color:var(--gold); }
+
+    .banner { display:none; border-radius:8px; padding:10px 14px; font-size:13px; line-height:1.5; margin-bottom:14px; }
+    .banner.error   { background:var(--error-bg);   border:1px solid var(--error-border);   color:var(--error-text); }
+    .banner.warn    { background:var(--warn-bg);    border:1px solid var(--warn-border);    color:var(--warn-text); }
+    .banner.success { background:var(--success-bg); border:1px solid var(--success-border); color:var(--success-text); }
+
+    .banner a { color:inherit; font-weight:500; }
+
+    .btn-primary { width:100%; padding:13px; margin-top:6px; background:linear-gradient(135deg,#c9a84c,#a8863a); border:none; border-radius:var(--radius); color:#0d0d0d; font-family:'DM Sans',sans-serif; font-size:14px; font-weight:500; letter-spacing:0.07em; text-transform:uppercase; cursor:pointer; transition:opacity var(--ease),transform var(--ease),box-shadow var(--ease); box-shadow:0 4px 20px rgba(201,168,76,0.28); }
+    .btn-primary:hover:not(:disabled) { opacity:0.9; transform:translateY(-1px); box-shadow:0 8px 28px rgba(201,168,76,0.38); }
+    .btn-primary:disabled { opacity:0.45; cursor:not-allowed; }
+    .btn-secondary { width:100%; padding:12px; margin-top:10px; background:transparent; border:1px solid var(--border); border-radius:var(--radius); color:var(--muted); font-family:'DM Sans',sans-serif; font-size:14px; font-weight:400; letter-spacing:0.07em; text-transform:uppercase; cursor:pointer; transition:all var(--ease); }
+    .btn-secondary:hover { border-color:var(--gold); color:var(--gold); background:var(--gold-dim); }
+
+    .footer-row { display:flex; justify-content:center; margin-top:20px; font-size:12px; color:var(--muted); }
+    .footer-row a { color:var(--gold); text-decoration:none; transition:color var(--ease); }
+    .footer-row a:hover { color:var(--gold-light); }
+
+    @media(max-width:480px) { .card { padding:32px 22px 28px; } }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <div class="card">
+
+      <div class="brand">
+        <div class="brand-logo">
+          <svg viewBox="0 0 24 24" fill="none" stroke="#c9a84c" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M2.7 10.3L12 21l9.3-10.7M2.7 10.3L6 4h12l3.3 6.3M2.7 10.3h18.6M12 21L7.5 10.3M12 21l4.5-10.7M6 4l1.5 6.3M18 4l-1.5 6.3"/>
+          </svg>
+        </div>
+        <div class="brand-name">C.N. Johnson</div>
+        <div class="brand-sub">Staff Portal</div>
+      </div>
+
+      <div class="divider"></div>
+
+      <div id="errorBox"   class="banner error" role="alert"></div>
+      <div id="warnBox"    class="banner warn"  role="alert"></div>
+      <div id="successBox" class="banner success" role="status"></div>
+
+      <span class="role-label">Sign in as</span>
+      <div class="role-row">
+        <button class="role-btn active" data-role="admin"   aria-pressed="true">Admin</button>
+        <button class="role-btn"        data-role="manager" aria-pressed="false">Manager</button>
+        <button class="role-btn"        data-role="cashier" aria-pressed="false">Cashier</button>
+      </div>
+
+      <div class="field">
+        <label for="email">Email</label>
+        <input type="email" id="email" placeholder="you@example.com" autocomplete="email" />
+      </div>
+
+      <div class="field">
+        <label for="password">Password</label>
+        <div class="pass-wrap">
+          <input type="password" id="password" placeholder="••••••••" autocomplete="current-password" />
+          <button class="toggle-pass" type="button" aria-label="Toggle password">
+            <svg id="eye-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/>
+            </svg>
+          </button>
+        </div>
+      </div>
+
+      <button class="btn-primary"   id="signInBtn">Sign In</button>
+      <button class="btn-secondary" id="signUpBtn">Create Account</button>
+
+      <div class="footer-row"><a href="#">Forgot password?</a></div>
+    </div>
+  </div>
+
+  <script>
+  (() => {
+    'use strict';
+    const API_URL = 'https://cn-active-backend-1.onrender.com';
+
+    const emailInput = document.getElementById('email');
+    const passInput  = document.getElementById('password');
+    const signInBtn  = document.getElementById('signInBtn');
+    const signUpBtn  = document.getElementById('signUpBtn');
+    const errorBox   = document.getElementById('errorBox');
+    const warnBox    = document.getElementById('warnBox');
+    const successBox = document.getElementById('successBox');
+    const roleBtns   = document.querySelectorAll('.role-btn');
+    let selectedRole = 'admin';
+
+    roleBtns.forEach(btn => {
+      btn.addEventListener('click', () => {
+        roleBtns.forEach(b => { b.classList.remove('active'); b.setAttribute('aria-pressed','false'); });
+        btn.classList.add('active'); btn.setAttribute('aria-pressed','true');
+        selectedRole = btn.dataset.role;
+        clearAll();
+      });
+    });
+
+    document.querySelector('.toggle-pass').addEventListener('click', () => {
+      const isHidden = passInput.type === 'password';
+      passInput.type = isHidden ? 'text' : 'password';
+      document.getElementById('eye-icon').innerHTML = isHidden
+        ? '<line x1="1" y1="1" x2="23" y2="23"/><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94"/><path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19"/>'
+        : '<path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/>';
+    });
+
+    signUpBtn.addEventListener('click', () => { window.location.href = 'signup.html'; });
+
+    const isValidEmail = e => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e);
+    function showError(msg)   { clearAll(); errorBox.textContent=msg;   errorBox.style.display='block'; }
+    function showWarn(msg)    { clearAll(); warnBox.innerHTML=msg;      warnBox.style.display='block'; }
+    function showSuccess(msg) { clearAll(); successBox.textContent=msg; successBox.style.display='block'; }
+    function clearAll()       { [errorBox,warnBox,successBox].forEach(b => b.style.display='none'); }
+    function setLoading(on)   { signInBtn.disabled=on; signInBtn.textContent=on?'Signing in…':'Sign In'; }
+
+    [emailInput, passInput].forEach(el => {
+      el.addEventListener('keydown', e => { if (e.key==='Enter') signInBtn.click(); });
+    });
+
+    signInBtn.addEventListener('click', async () => {
+      clearAll();
+      const email    = emailInput.value.trim();
+      const password = passInput.value.trim();
+
+      if (!email || !password) { showError('Please enter your email and password.'); return; }
+      if (!isValidEmail(email)) { showError('Please enter a valid email address.'); emailInput.focus(); return; }
+      if (password.length < 6) { showError('Password must be at least 6 characters.'); passInput.focus(); return; }
+
+      setLoading(true);
+      try {
+        const res  = await fetch(API_URL + '/api/auth/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email, password, role: selectedRole }),
+        });
+        const data = await res.json();
+
+        // Pending approval — redirect to pending page
+        if (res.status === 403 && data.code === 'PENDING_APPROVAL') {
+          localStorage.setItem('cnj_pending_email', email);
+          window.location.href = 'pending.html';
+          return;
+        }
+
+        if (!res.ok) { showError(data.message || 'Login failed. Please try again.'); return; }
+
+        localStorage.setItem('cnjohnson_access_token', data.accessToken);
+        localStorage.setItem('cnjohnson_auth', JSON.stringify(data.user));
+        if (data.expiresIn) localStorage.setItem('cnjohnson_token_expiry', Date.now() + data.expiresIn * 1000);
+
+        showSuccess('Welcome back! Redirecting…');
+
+        // Role-based redirect
+        const role = data.user.role;
+        setTimeout(() => {
+          if (role === 'CASHIER') window.location.href = 'pos.html';
+          else                    window.location.href = 'dashboard.html';
+        }, 900);
+
+      } catch (err) {
+        showError(err.name === 'TypeError' ? 'Could not reach the server. Check your connection.' : 'An unexpected error occurred.');
+        console.error('[CNJ Login]', err);
+      } finally {
+        setLoading(false);
+      }
+    });
+  })();
+  </script>
+</body>
+</html>
