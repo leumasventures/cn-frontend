@@ -42,11 +42,14 @@
     .page-header{display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:28px;flex-wrap:wrap;gap:12px}
     .page-header-left h1{font-family:"Cormorant Garamond",serif;font-size:28px;font-weight:700;color:var(--text)}
     .page-header-left p{font-size:13px;color:var(--muted);margin-top:3px}
+    .header-actions{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
     .btn{display:inline-flex;align-items:center;gap:7px;padding:9px 16px;border-radius:var(--radius);font-size:13px;font-weight:500;cursor:pointer;font-family:"DM Sans",sans-serif;border:none;transition:all var(--ease)}
     .btn-primary{background:linear-gradient(135deg,#c9a84c,#a8863a);color:#0d0d0d;box-shadow:0 4px 14px rgba(201,168,76,0.2)}
     .btn-primary:hover{opacity:.9;transform:translateY(-1px)}
     .btn-secondary{background:transparent;color:var(--muted);border:1px solid var(--border)}
     .btn-secondary:hover{border-color:var(--gold);color:var(--gold)}
+    .btn-amber{background:var(--amber-bg);color:var(--amber);border:1px solid var(--amber-border)}
+    .btn-amber:hover{background:rgba(245,158,11,0.18)}
     .btn-danger{background:var(--red-bg);color:var(--red);border:1px solid var(--red-border)}
     .btn-danger:hover{background:rgba(239,68,68,0.2)}
     .btn-sm{padding:5px 11px;font-size:12px}
@@ -78,31 +81,70 @@
     .badge-blue{background:var(--blue-bg);border:1px solid var(--blue-border);color:var(--blue)}
     .badge-muted{background:var(--subtle);border:1px solid var(--border);color:var(--muted)}
     .badge-gold{background:var(--gold-dim);border:1px solid rgba(201,168,76,.3);color:var(--gold)}
+
+    /* ── Modal base ── */
     .modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.8);display:flex;align-items:center;justify-content:center;z-index:200;opacity:0;pointer-events:none;transition:opacity .2s;backdrop-filter:blur(4px)}
     .modal-overlay.open{opacity:1;pointer-events:all}
     .modal{background:var(--card);border:1px solid var(--border);border-radius:14px;padding:28px;width:90%;max-width:520px;max-height:90vh;overflow-y:auto;transform:scale(.96);transition:transform .2s}
     .modal-overlay.open .modal{transform:scale(1)}
     .modal-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:22px}
     .modal-title{font-family:"Cormorant Garamond",serif;font-size:22px;font-weight:700;color:var(--text)}
-    .modal-close{background:none;border:none;color:var(--muted);cursor:pointer;font-size:22px;line-height:1;transition:color var(--ease)}
+    .modal-close{background:none;border:none;color:var(--muted);cursor:pointer;font-size:22px;line-height:1;transition:color var(--ease);padding:0 2px}
     .modal-close:hover{color:var(--text)}
     .form-group{margin-bottom:16px}
     .form-group label{display:block;font-size:11px;font-weight:500;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);margin-bottom:6px}
     .form-input{width:100%;padding:10px 13px;background:rgba(255,255,255,.03);border:1px solid var(--border);border-radius:var(--radius);color:var(--text);font-family:"DM Sans",sans-serif;font-size:13px;outline:none;transition:border-color var(--ease)}
     .form-input:focus{border-color:var(--gold);box-shadow:0 0 0 3px rgba(201,168,76,.08)}
     .form-input::placeholder{color:#3a3630}
+    .form-input:disabled{opacity:.4;cursor:not-allowed}
     select.form-input{cursor:pointer}
     .form-row{display:grid;gap:12px}
     .fr2{grid-template-columns:1fr 1fr}
     .fr3{grid-template-columns:1fr 1fr 1fr}
     .modal-footer{display:flex;gap:10px;justify-content:flex-end;margin-top:24px;padding-top:18px;border-top:1px solid var(--border)}
+
+    /* ── Bulk modal (wider) ── */
+    .modal-bulk{max-width:720px}
+    .bulk-header-info{background:var(--subtle);border:1px solid var(--border);border-radius:var(--radius);padding:12px 14px;margin-bottom:18px;font-size:12px;color:var(--muted);display:flex;align-items:center;gap:8px}
+    .bulk-header-info svg{width:14px;height:14px;color:var(--amber);flex-shrink:0}
+
+    /* Bulk items list */
+    .bulk-items{display:flex;flex-direction:column;gap:8px;margin-bottom:12px;max-height:340px;overflow-y:auto;padding-right:4px}
+    .bulk-items::-webkit-scrollbar{width:3px}.bulk-items::-webkit-scrollbar-thumb{background:var(--border)}
+    .bulk-item{display:grid;grid-template-columns:1fr 120px 36px;gap:8px;align-items:center;background:rgba(255,255,255,.02);border:1px solid var(--border);border-radius:var(--radius);padding:10px 12px;animation:fadeUp .2s ease}
+    .bulk-item-num{font-size:10px;color:var(--muted);margin-bottom:3px;letter-spacing:.04em}
+    .add-item-row{display:flex;justify-content:flex-start}
+    .btn-add-line{display:inline-flex;align-items:center;gap:6px;padding:7px 13px;border-radius:var(--radius);font-size:12px;color:var(--gold);border:1px dashed rgba(201,168,76,.4);background:var(--gold-dim);cursor:pointer;font-family:"DM Sans",sans-serif;transition:all var(--ease)}
+    .btn-add-line:hover{border-color:var(--gold);background:rgba(201,168,76,.15)}
+    .btn-remove-line{background:none;border:none;cursor:pointer;color:var(--muted);transition:color var(--ease);display:flex;align-items:center;justify-content:center;padding:4px;border-radius:4px}
+    .btn-remove-line:hover{color:var(--red);background:var(--red-bg)}
+    .btn-remove-line svg{width:14px;height:14px}
+    .bulk-divider{border:none;border-top:1px solid var(--border);margin:4px 0 16px}
+    .bulk-summary{background:var(--gold-dim);border:1px solid rgba(201,168,76,.2);border-radius:var(--radius);padding:10px 14px;font-size:12px;color:var(--gold-light);display:flex;align-items:center;gap:8px;margin-bottom:4px}
+    .bulk-summary svg{width:13px;height:13px}
+    .progress-bar-wrap{background:var(--subtle);border-radius:999px;height:3px;overflow:hidden;margin-top:6px}
+    .progress-bar{height:100%;background:linear-gradient(90deg,var(--gold),var(--gold-light));border-radius:999px;transition:width .3s ease}
+
+    /* Type selector tabs */
+    .type-tabs{display:flex;gap:8px;margin-bottom:20px}
+    .type-tab{flex:1;padding:10px;border-radius:var(--radius);border:1px solid var(--border);background:transparent;color:var(--muted);font-family:"DM Sans",sans-serif;font-size:13px;cursor:pointer;transition:all var(--ease);display:flex;align-items:center;justify-content:center;gap:8px}
+    .type-tab svg{width:14px;height:14px}
+    .type-tab.active{border-color:var(--gold);background:var(--gold-dim);color:var(--gold)}
+    .type-tab:hover:not(.active){border-color:#333;color:var(--text)}
+
     #toast{position:fixed;bottom:20px;right:24px;padding:11px 18px;border-radius:9px;font-size:13px;box-shadow:0 8px 24px rgba(0,0,0,.4);z-index:300;transform:translateY(60px);opacity:0;transition:all .3s cubic-bezier(.22,1,.36,1);pointer-events:none}
     #toast.show{transform:translateY(0);opacity:1}
     #toast.success{background:#0d2414;border:1px solid #1a5c30;color:#4ade80}
     #toast.error{background:#2a1212;border:1px solid #7f2020;color:#f87171}
+    #toast.info{background:#0d1a2a;border:1px solid #1a3a5c;color:var(--blue)}
     .spinner{display:inline-block;width:16px;height:16px;border:2px solid var(--border);border-top-color:var(--gold);border-radius:50%;animation:spin .7s linear infinite}
     @keyframes spin{to{transform:rotate(360deg)}}
-    @media(max-width:900px){.layout{grid-template-columns:1fr}.sidebar{display:none}.main{padding:20px 14px}}
+    .loading-cell{padding:40px;text-align:center;color:var(--muted)}
+
+    /* Bulk badge in table */
+    .badge-bulk{background:rgba(245,158,11,.1);border:1px solid rgba(245,158,11,.25);color:var(--amber);font-size:10px;padding:2px 7px;border-radius:999px;margin-left:6px;vertical-align:middle}
+
+    @media(max-width:900px){.layout{grid-template-columns:1fr}.sidebar{display:none}.main{padding:20px 14px}.modal-bulk{max-width:95vw}}
   </style>
 </head>
 <body><div class="layout">
@@ -131,28 +173,50 @@
     <button class="logout-btn" onclick="CNJlogout()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>Sign Out</button>
   </div>
 </aside>
-<main class="main">
 
-<div class="page-header">
-  <div class="page-header-left"><h1>Stock Transfers</h1><p>Move inventory between warehouses</p></div>
-  <button class="btn btn-primary" onclick="openModal()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>New Transfer</button>
-</div>
-<div class="stats-row" style="grid-template-columns:repeat(3,1fr)">
-  <div class="stat-card"><div class="stat-label">Total Transfers</div><div class="stat-value gold" id="stCount">—</div></div>
-  <div class="stat-card"><div class="stat-label">Units Moved</div><div class="stat-value blue" id="stUnits">—</div></div>
-  <div class="stat-card"><div class="stat-label">This Month</div><div class="stat-value green" id="stMonth">—</div></div>
-</div>
-<div class="table-card">
-  <div class="table-toolbar">
-    <div class="search-wrap"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-    <input class="search-input" id="srch" placeholder="Search product, warehouse…" oninput="render()"/></div>
+<main class="main">
+  <div class="page-header">
+    <div class="page-header-left"><h1>Stock Transfers</h1><p>Move inventory between warehouses</p></div>
+    <div class="header-actions">
+      <button class="btn btn-amber" onclick="openBulkModal()">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 16l-4-4-4 4M12 12V3"/><path d="M20 21H4a2 2 0 01-2-2V5a2 2 0 012-2h16a2 2 0 012 2v14a2 2 0 01-2 2z"/></svg>
+        Bulk Transfer
+      </button>
+      <button class="btn btn-primary" onclick="openModal()">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+        New Transfer
+      </button>
+    </div>
   </div>
-  <table><thead><tr><th>Product</th><th>From</th><th>To</th><th>Qty</th><th>Note</th><th>Date</th></tr></thead>
-  <tbody id="tbody"></tbody></table>
+
+  <div class="stats-row" style="grid-template-columns:repeat(3,1fr)">
+    <div class="stat-card"><div class="stat-label">Total Transfers</div><div class="stat-value gold" id="stCount">—</div></div>
+    <div class="stat-card"><div class="stat-label">Units Moved</div><div class="stat-value blue" id="stUnits">—</div></div>
+    <div class="stat-card"><div class="stat-label">This Month</div><div class="stat-value green" id="stMonth">—</div></div>
+  </div>
+
+  <div class="table-card">
+    <div class="table-toolbar">
+      <div class="search-wrap">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+        <input class="search-input" id="srch" placeholder="Search product, warehouse…" oninput="render()"/>
+      </div>
+    </div>
+    <table>
+      <thead><tr><th>Product</th><th>From</th><th>To</th><th>Qty</th><th>Note</th><th>Date</th></tr></thead>
+      <tbody id="tbody"></tbody>
+    </table>
+  </div>
+</main>
 </div>
+
+<!-- ── Single Transfer Modal ── -->
 <div class="modal-overlay" id="modal">
   <div class="modal">
-    <div class="modal-header"><span class="modal-title">New Stock Transfer</span><button class="modal-close" onclick="closeModal()">&#215;</button></div>
+    <div class="modal-header">
+      <span class="modal-title">New Stock Transfer</span>
+      <button class="modal-close" onclick="closeModal()">&#215;</button>
+    </div>
     <div class="form-group"><label>Product *</label><select class="form-input" id="fProduct"><option value="">Select product</option></select></div>
     <div class="form-row fr2">
       <div class="form-group"><label>From Warehouse *</label><select class="form-input" id="fFrom"><option value="">Select</option></select></div>
@@ -164,32 +228,119 @@
     </div>
     <div class="modal-footer">
       <button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
-      <button class="btn btn-primary" onclick="save()">Transfer</button>
+      <button class="btn btn-primary" id="saveBtn" onclick="save()">Transfer</button>
     </div>
   </div>
 </div>
+
+<!-- ── Bulk Transfer Modal ── -->
+<div class="modal-overlay" id="bulkModal">
+  <div class="modal modal-bulk">
+    <div class="modal-header">
+      <span class="modal-title">Bulk Stock Transfer</span>
+      <button class="modal-close" onclick="closeBulkModal()">&#215;</button>
+    </div>
+
+    <div class="bulk-header-info">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+      Set shared warehouses below, then add one line per product. All items move in a single operation.
+    </div>
+
+    <!-- Shared from/to warehouses -->
+    <div class="form-row fr2" style="margin-bottom:16px">
+      <div class="form-group" style="margin-bottom:0"><label>From Warehouse *</label><select class="form-input" id="bFrom" onchange="syncBulkWarehouses()"><option value="">Select</option></select></div>
+      <div class="form-group" style="margin-bottom:0"><label>To Warehouse *</label><select class="form-input" id="bTo" onchange="syncBulkWarehouses()"><option value="">Select</option></select></div>
+    </div>
+
+    <hr class="bulk-divider"/>
+
+    <!-- Line items -->
+    <div class="bulk-items" id="bulkItems"></div>
+
+    <div class="add-item-row" style="margin-bottom:14px">
+      <button class="btn-add-line" onclick="addBulkLine()">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+        Add Product Line
+      </button>
+    </div>
+
+    <!-- Summary -->
+    <div class="bulk-summary" id="bulkSummary" style="display:none">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="17 1 21 5 17 9"/><path d="M3 11V9a4 4 0 014-4h14"/><polyline points="7 23 3 19 7 15"/><path d="M21 13v2a4 4 0 01-4 4H3"/></svg>
+      <span id="bulkSummaryText">Ready to transfer</span>
+    </div>
+
+    <!-- Shared note -->
+    <div class="form-group" style="margin-top:12px;margin-bottom:0"><label>Shared Note (optional)</label><input class="form-input" id="bNote" placeholder="e.g. Monthly restock run"/></div>
+
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="closeBulkModal()">Cancel</button>
+      <button class="btn btn-amber" id="bulkSaveBtn" onclick="saveBulk()">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="17 1 21 5 17 9"/><path d="M3 11V9a4 4 0 014-4h14"/><polyline points="7 23 3 19 7 15"/><path d="M21 13v2a4 4 0 01-4 4H3"/></svg>
+        Execute Bulk Transfer
+      </button>
+    </div>
+  </div>
+</div>
+
+<div id="toast"></div>
+
 <script>
+/* ── Auth ── */
+const _a=JSON.parse(localStorage.getItem("cnjohnson_auth")||"null");
+const _t=localStorage.getItem("cnjohnson_access_token");
+if(!_t||!_a){window.location.href="login.html";}
+if(document.getElementById("sidebarUser"))document.getElementById("sidebarUser").textContent=_a?.name||"User";
+if(_a?.role==="ADMIN"){const al=document.getElementById("adminLink");if(al)al.style.display="flex";}
+function CNJlogout(){localStorage.removeItem("cnjohnson_access_token");localStorage.removeItem("cnjohnson_auth");localStorage.removeItem("cnjohnson_token_expiry");window.location.href="login.html";}
+
+/* ── Globals ── */
+const API="https://cn-active-backend-1.onrender.com";
+const H={headers:{Authorization:"Bearer "+_t,"Content-Type":"application/json"}};
 let data=[],products=[],warehouses=[];
+let bulkLines=[]; // [{id, productId, qty}]
+
+/* ── Helpers ── */
+let _tt;
+function toast(msg,type="success"){const t=document.getElementById("toast");t.textContent=msg;t.className="show "+type;clearTimeout(_tt);_tt=setTimeout(()=>t.className=type,3200);}
+function fmt(n){return"₦"+Number(n||0).toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g,",");}
+function fmtDate(d){return d?new Date(d).toLocaleDateString("en-GB",{day:"numeric",month:"short",year:"numeric"}):"--";}
+function esc(s){return String(s||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");}
+function warehouseOptions(selected=""){return'<option value="">Select</option>'+warehouses.map(w=>`<option value="${w.id}"${w.id===selected?" selected":""}>${esc(w.name)}</option>`).join("");}
+function productOptions(selected=""){return'<option value="">Select product</option>'+products.map(p=>`<option value="${p.id}"${p.id===selected?" selected":""}>${esc(p.name)} (${p.stock} in stock)</option>`).join("");}
+
+/* ── Load ── */
 async function load(){
+  document.getElementById("tbody").innerHTML='<tr><td colspan="6"><div class="loading-cell"><div class="spinner"></div></div></td></tr>';
   const [pr,wr,dr]=await Promise.all([fetch(API+"/api/products",H),fetch(API+"/api/warehouses",H),fetch(API+"/api/stock-transfers?limit=500",H)]);
   const pd=await pr.json(),wd=await wr.json(),dd=await dr.json();
-  products=pd.products||pd.data||[];warehouses=wd.warehouses||wd.data||[];data=dd.stockTransfers||dd.transfers||dd.data||[];
-  const wHtml='<option value="">Select</option>'+warehouses.map(w=>`<option value="${w.id}">${esc(w.name)}</option>`).join("");
-  document.getElementById("fProduct").innerHTML='<option value="">Select product</option>'+products.map(p=>`<option value="${p.id}">${esc(p.name)} (${p.stock} in stock)</option>`).join("");
-  document.getElementById("fFrom").innerHTML=wHtml;document.getElementById("fTo").innerHTML=wHtml;
+  products=pd.products||pd.data||[];
+  warehouses=wd.warehouses||wd.data||[];
+  data=dd.stockTransfers||dd.transfers||dd.data||[];
+
+  /* Single modal selects */
+  document.getElementById("fProduct").innerHTML=productOptions();
+  document.getElementById("fFrom").innerHTML=warehouseOptions();
+  document.getElementById("fTo").innerHTML=warehouseOptions();
+  /* Bulk modal warehouse selects */
+  document.getElementById("bFrom").innerHTML=warehouseOptions();
+  document.getElementById("bTo").innerHTML=warehouseOptions();
+
   const now=new Date(),tm=data.filter(x=>{const d=new Date(x.createdAt);return d.getMonth()===now.getMonth()&&d.getFullYear()===now.getFullYear();});
   document.getElementById("stCount").textContent=data.length;
   document.getElementById("stUnits").textContent=data.reduce((s,x)=>s+(x.qty||0),0);
   document.getElementById("stMonth").textContent=tm.length;
   render();
 }
+
+/* ── Render table ── */
 function render(){
   const q=document.getElementById("srch").value.toLowerCase();
   const rows=data.filter(x=>(x.product?.name||"").toLowerCase().includes(q)||(x.fromWarehouse?.name||"").toLowerCase().includes(q)||(x.toWarehouse?.name||"").toLowerCase().includes(q));
   const tb=document.getElementById("tbody");
-  if(!rows.length){tb.innerHTML='<tr><td colspan="6"><div class="empty-state"><p>No transfers found</p></div></td></tr>';return;}
+  if(!rows.length){tb.innerHTML='<tr><td colspan="6"><div class="empty-state"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><polyline points="17 1 21 5 17 9"/><path d="M3 11V9a4 4 0 014-4h14"/><polyline points="7 23 3 19 7 15"/><path d="M21 13v2a4 4 0 01-4 4H3"/></svg><p>No transfers found</p></div></td></tr>';return;}
   tb.innerHTML=rows.map(x=>`<tr>
-    <td><strong>${esc(x.product?.name||"—")}</strong></td>
+    <td><strong>${esc(x.product?.name||"—")}</strong>${x.bulkBatchId?'<span class="badge-bulk">BULK</span>':''}</td>
     <td><span class="badge badge-muted">${esc(x.fromWarehouse?.name||"—")}</span></td>
     <td><span class="badge badge-blue">${esc(x.toWarehouse?.name||"—")}</span></td>
     <td><strong>${x.qty}</strong></td>
@@ -197,33 +348,135 @@ function render(){
     <td style="color:var(--muted);font-size:12px">${fmtDate(x.createdAt)}</td>
   </tr>`).join("");
 }
-function openModal(){["fProduct","fFrom","fTo","fQty","fNote"].forEach(id=>document.getElementById(id).value="");document.getElementById("modal").classList.add("open");}
+
+/* ── Single transfer ── */
+function openModal(){
+  ["fProduct","fFrom","fTo","fQty","fNote"].forEach(id=>document.getElementById(id).value="");
+  document.getElementById("modal").classList.add("open");
+}
 function closeModal(){document.getElementById("modal").classList.remove("open");}
 async function save(){
   const productId=document.getElementById("fProduct").value,fromWarehouseId=document.getElementById("fFrom").value,toWarehouseId=document.getElementById("fTo").value,qty=parseInt(document.getElementById("fQty").value);
-  if(!productId||!fromWarehouseId||!toWarehouseId||!qty){toast("All fields required","error");return;}
+  if(!productId||!fromWarehouseId||!toWarehouseId||!qty){toast("All required fields missing","error");return;}
   if(fromWarehouseId===toWarehouseId){toast("From and To must differ","error");return;}
+  const btn=document.getElementById("saveBtn");
+  btn.disabled=true;btn.innerHTML='<div class="spinner"></div> Saving…';
   const body={productId,fromWarehouseId,toWarehouseId,qty,note:document.getElementById("fNote").value};
   const r=await fetch(API+"/api/stock-transfers",{...H,method:"POST",body:JSON.stringify(body)});
-  const d=await r.json();if(!r.ok){toast(d.message||"Error","error");return;}
+  const d=await r.json();
+  btn.disabled=false;btn.innerHTML='Transfer';
+  if(!r.ok){toast(d.message||"Error","error");return;}
   toast("Transfer recorded");closeModal();load();
 }
+
+/* ── Bulk transfer ── */
+let bulkLineId=0;
+function openBulkModal(){
+  bulkLines=[];
+  bulkLineId=0;
+  document.getElementById("bFrom").value="";
+  document.getElementById("bTo").value="";
+  document.getElementById("bNote").value="";
+  renderBulkLines();
+  addBulkLine();
+  updateBulkSummary();
+  document.getElementById("bulkModal").classList.add("open");
+}
+function closeBulkModal(){document.getElementById("bulkModal").classList.remove("open");}
+
+function addBulkLine(){
+  const id=++bulkLineId;
+  bulkLines.push({id,productId:"",qty:""});
+  renderBulkLines();
+  updateBulkSummary();
+}
+function removeBulkLine(id){
+  bulkLines=bulkLines.filter(l=>l.id!==id);
+  renderBulkLines();
+  updateBulkSummary();
+}
+function renderBulkLines(){
+  const container=document.getElementById("bulkItems");
+  if(!bulkLines.length){container.innerHTML='<div style="color:var(--muted);font-size:13px;padding:10px 0;text-align:center">No product lines yet. Click "Add Product Line" below.</div>';return;}
+  container.innerHTML=bulkLines.map((line,i)=>`
+    <div class="bulk-item" id="bline-${line.id}">
+      <div>
+        <div class="bulk-item-num">Line ${i+1}</div>
+        <select class="form-input" style="margin-bottom:0" onchange="setBulkProduct(${line.id},this.value)">${productOptions(line.productId)}</select>
+      </div>
+      <input class="form-input" type="number" min="1" placeholder="Qty" value="${line.qty||""}" oninput="setBulkQty(${line.id},this.value)" style="margin-bottom:0"/>
+      <button class="btn-remove-line" onclick="removeBulkLine(${line.id})" title="Remove line">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a1 1 0 011-1h4a1 1 0 011 1v2"/></svg>
+      </button>
+    </div>`).join("");
+}
+function setBulkProduct(id,val){const l=bulkLines.find(x=>x.id===id);if(l)l.productId=val;updateBulkSummary();}
+function setBulkQty(id,val){const l=bulkLines.find(x=>x.id===id);if(l)l.qty=val;updateBulkSummary();}
+function syncBulkWarehouses(){updateBulkSummary();}
+
+function updateBulkSummary(){
+  const fromId=document.getElementById("bFrom").value;
+  const toId=document.getElementById("bTo").value;
+  const fromName=warehouses.find(w=>w.id===fromId)?.name||"—";
+  const toName=warehouses.find(w=>w.id===toId)?.name||"—";
+  const filled=bulkLines.filter(l=>l.productId&&parseInt(l.qty)>0);
+  const totalQty=filled.reduce((s,l)=>s+parseInt(l.qty||0),0);
+  const summary=document.getElementById("bulkSummary");
+  const txt=document.getElementById("bulkSummaryText");
+  if(filled.length>0&&fromId&&toId){
+    summary.style.display="flex";
+    txt.textContent=`${filled.length} product${filled.length>1?"s":""} · ${totalQty} unit${totalQty!==1?"s":""} · ${fromName} → ${toName}`;
+  } else {
+    summary.style.display="none";
+  }
+}
+
+async function saveBulk(){
+  const fromWarehouseId=document.getElementById("bFrom").value;
+  const toWarehouseId=document.getElementById("bTo").value;
+  const sharedNote=document.getElementById("bNote").value;
+  if(!fromWarehouseId||!toWarehouseId){toast("Select both warehouses","error");return;}
+  if(fromWarehouseId===toWarehouseId){toast("From and To warehouses must differ","error");return;}
+  const validLines=bulkLines.filter(l=>l.productId&&parseInt(l.qty)>0);
+  if(!validLines.length){toast("Add at least one product line with a quantity","error");return;}
+
+  const btn=document.getElementById("bulkSaveBtn");
+  btn.disabled=true;
+  btn.innerHTML=`<div class="spinner"></div> Transferring ${validLines.length} item${validLines.length>1?"s":""}…`;
+
+  /* Send each transfer sequentially; accumulate errors */
+  const batchId="bulk-"+Date.now();
+  let success=0,errors=[];
+  for(const line of validLines){
+    const body={productId:line.productId,fromWarehouseId,toWarehouseId,qty:parseInt(line.qty),note:sharedNote||undefined,bulkBatchId:batchId};
+    try{
+      const r=await fetch(API+"/api/stock-transfers",{...H,method:"POST",body:JSON.stringify(body)});
+      const d=await r.json();
+      if(r.ok){success++;}
+      else{const pName=products.find(p=>p.id===line.productId)?.name||line.productId;errors.push(`${pName}: ${d.message||"failed"}`);}
+    } catch(e){
+      const pName=products.find(p=>p.id===line.productId)?.name||line.productId;
+      errors.push(`${pName}: network error`);
+    }
+  }
+
+  btn.disabled=false;
+  btn.innerHTML=`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="17 1 21 5 17 9"/><path d="M3 11V9a4 4 0 014-4h14"/><polyline points="7 23 3 19 7 15"/><path d="M21 13v2a4 4 0 01-4 4H3"/></svg> Execute Bulk Transfer`;
+
+  if(errors.length&&success===0){
+    toast(`All transfers failed: ${errors[0]}`,"error");
+    return;
+  }
+  if(errors.length){
+    toast(`${success} transferred, ${errors.length} failed: ${errors[0]}`,"error");
+  } else {
+    toast(`${success} transfer${success>1?"s":""} completed successfully`);
+  }
+  closeBulkModal();
+  load();
+}
+
 load();
-</script></main></div>
-<div id="toast"></div>
-<script>
-const _a=JSON.parse(localStorage.getItem("cnjohnson_auth")||"null");
-const _t=localStorage.getItem("cnjohnson_access_token");
-if(!_t||!_a){window.location.href="login.html";}
-if(document.getElementById("sidebarUser"))document.getElementById("sidebarUser").textContent=_a?.name||"User";
-if(_a?.role==="ADMIN"){const al=document.getElementById("adminLink");if(al)al.style.display="flex";}
-function CNJlogout(){localStorage.removeItem("cnjohnson_access_token");localStorage.removeItem("cnjohnson_auth");localStorage.removeItem("cnjohnson_token_expiry");window.location.href="login.html";}
-let _tt;
-function toast(msg,type="success"){const t=document.getElementById("toast");t.textContent=msg;t.className="show "+type;clearTimeout(_tt);_tt=setTimeout(()=>t.className=type,3200);}
-function fmt(n){return"₦"+Number(n||0).toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g,",");}
-function fmtDate(d){return d?new Date(d).toLocaleDateString("en-GB",{day:"numeric",month:"short",year:"numeric"}):"--";}
-function esc(s){return String(s||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");}
-const API="https://cn-active-backend-1.onrender.com";
-const H={headers:{Authorization:"Bearer "+_t,"Content-Type":"application/json"}};
 </script>
-</body></html>
+</body>
+</html>

@@ -43,13 +43,48 @@
 
     /* Main */
     .main { padding:36px 40px; overflow-y:auto; }
-    .page-header { margin-bottom:28px; display:flex; align-items:flex-start; justify-content:space-between; gap:16px; }
-    .page-header-left {}
+    .page-header { margin-bottom:28px; display:flex; align-items:flex-start; justify-content:space-between; gap:16px; flex-wrap:wrap; }
     .page-title { font-family:'Cormorant Garamond',serif; font-size:28px; font-weight:700; color:var(--text); margin-bottom:4px; }
     .page-sub { font-size:13px; color:var(--muted); }
-    .btn-add { padding:10px 18px; background:linear-gradient(135deg,#c9a84c,#a8863a); border:none; border-radius:8px; color:#0d0d0d; font-family:'DM Sans',sans-serif; font-size:13px; font-weight:600; cursor:pointer; display:flex; align-items:center; gap:7px; transition:opacity var(--ease); white-space:nowrap; }
+
+    /* Header action buttons */
+    .header-actions { display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
+
+    .btn-add {
+      padding:10px 18px; background:linear-gradient(135deg,#c9a84c,#a8863a); border:none;
+      border-radius:8px; color:#0d0d0d; font-family:'DM Sans',sans-serif; font-size:13px;
+      font-weight:600; cursor:pointer; display:flex; align-items:center; gap:7px;
+      transition:opacity var(--ease); white-space:nowrap;
+    }
     .btn-add:hover { opacity:0.88; }
     .btn-add svg { width:14px; height:14px; }
+
+    /* Bulk import button — distinctive style */
+    .btn-bulk {
+      padding:10px 18px; background:transparent;
+      border:1px solid rgba(96,165,250,0.4); border-radius:8px;
+      color:var(--blue); font-family:'DM Sans',sans-serif; font-size:13px;
+      font-weight:500; cursor:pointer; display:flex; align-items:center; gap:7px;
+      transition:all var(--ease); white-space:nowrap; position:relative; overflow:hidden;
+    }
+    .btn-bulk::before {
+      content:''; position:absolute; inset:0;
+      background:linear-gradient(135deg, rgba(96,165,250,0.08), rgba(96,165,250,0.02));
+      opacity:0; transition:opacity var(--ease);
+    }
+    .btn-bulk:hover { border-color:var(--blue); background:rgba(96,165,250,0.08); }
+    .btn-bulk:hover::before { opacity:1; }
+    .btn-bulk svg { width:14px; height:14px; }
+
+    .btn-template {
+      padding:10px 18px; background:transparent;
+      border:1px solid rgba(34,197,94,0.3); border-radius:8px;
+      color:var(--green); font-family:'DM Sans',sans-serif; font-size:13px;
+      font-weight:500; cursor:pointer; display:flex; align-items:center; gap:7px;
+      transition:all var(--ease); white-space:nowrap;
+    }
+    .btn-template:hover { border-color:var(--green); background:var(--green-bg); }
+    .btn-template svg { width:14px; height:14px; }
 
     /* Stats */
     .stats-row { display:grid; grid-template-columns:repeat(4,1fr); gap:14px; margin-bottom:28px; }
@@ -87,31 +122,22 @@
     .prod-icon svg { width:15px; height:15px; color:var(--gold); }
     .prod-name { font-weight:400; color:var(--text); }
     .prod-sku { font-size:11px; color:var(--muted); margin-top:1px; }
-
     .price-cell { font-family:'Cormorant Garamond',serif; font-size:16px; font-weight:600; color:var(--gold); }
     .cost-cell { font-size:12px; color:var(--muted); }
-
     .stock-cell { display:flex; align-items:center; gap:6px; }
     .stock-num { font-weight:500; }
-    .stock-num.ok { color:var(--green); }
-    .stock-num.low { color:var(--amber); }
-    .stock-num.out { color:var(--red); }
+    .stock-num.ok { color:var(--green); } .stock-num.low { color:var(--amber); } .stock-num.out { color:var(--red); }
     .stock-bar { width:40px; height:4px; background:var(--border); border-radius:2px; overflow:hidden; }
     .stock-bar-fill { height:100%; border-radius:2px; transition:width 0.4s ease; }
-    .stock-bar-fill.ok { background:var(--green); }
-    .stock-bar-fill.low { background:var(--amber); }
-    .stock-bar-fill.out { background:var(--red); }
-
+    .stock-bar-fill.ok { background:var(--green); } .stock-bar-fill.low { background:var(--amber); } .stock-bar-fill.out { background:var(--red); }
     .badge { display:inline-flex; align-items:center; padding:3px 9px; border-radius:999px; font-size:11px; font-weight:500; }
     .badge-active { background:var(--green-bg); border:1px solid var(--green-border); color:var(--green); }
     .badge-inactive { background:var(--red-bg); border:1px solid var(--red-border); color:var(--red); }
-
     .actions { display:flex; align-items:center; gap:6px; }
     .btn-icon { width:30px; height:30px; border-radius:6px; background:transparent; border:1px solid var(--border); color:var(--muted); cursor:pointer; display:flex; align-items:center; justify-content:center; transition:all var(--ease); }
     .btn-icon:hover { border-color:var(--gold); color:var(--gold); }
     .btn-icon.danger:hover { border-color:var(--red); color:var(--red); }
     .btn-icon svg { width:13px; height:13px; }
-
     .empty-state { text-align:center; padding:60px 20px; color:var(--muted); }
     .empty-state svg { width:40px; height:40px; margin:0 auto 12px; opacity:0.25; display:block; }
     .empty-state p { font-size:14px; margin-bottom:16px; }
@@ -119,52 +145,100 @@
     .spinner { display:inline-block; width:16px; height:16px; border:2px solid var(--border); border-top-color:var(--gold); border-radius:50%; animation:spin 0.7s linear infinite; }
     @keyframes spin{to{transform:rotate(360deg)}}
 
-    /* ── Modal ── */
+    /* ── Modal base ── */
     .modal-overlay { position:fixed; inset:0; background:rgba(0,0,0,0.75); backdrop-filter:blur(4px); z-index:500; opacity:0; pointer-events:none; transition:opacity 0.2s ease; display:flex; align-items:center; justify-content:center; padding:20px; }
     .modal-overlay.open { opacity:1; pointer-events:all; }
     .modal { background:var(--surface); border:1px solid var(--border); border-radius:16px; width:100%; max-width:560px; max-height:90vh; overflow-y:auto; transform:scale(0.96); transition:transform 0.2s ease; }
     .modal-overlay.open .modal { transform:scale(1); }
     .modal::-webkit-scrollbar { width:3px; }
     .modal::-webkit-scrollbar-thumb { background:var(--border); }
-
     .modal-header { padding:22px 24px; border-bottom:1px solid var(--border); display:flex; align-items:center; justify-content:space-between; }
     .modal-title { font-family:'Cormorant Garamond',serif; font-size:20px; font-weight:700; color:var(--text); }
     .modal-close { width:30px; height:30px; border-radius:6px; background:transparent; border:1px solid var(--border); color:var(--muted); cursor:pointer; display:flex; align-items:center; justify-content:center; transition:all var(--ease); }
     .modal-close:hover { border-color:var(--red); color:var(--red); }
     .modal-close svg { width:14px; height:14px; }
-
     .modal-body { padding:24px; }
     .form-grid { display:grid; grid-template-columns:1fr 1fr; gap:14px; }
     .form-group { display:flex; flex-direction:column; gap:6px; }
     .form-group.full { grid-column:1/-1; }
     .form-label { font-size:11px; letter-spacing:0.08em; text-transform:uppercase; color:var(--muted); }
-    .form-input, .form-select, .form-textarea {
-      padding:10px 12px; background:var(--subtle); border:1px solid var(--border);
-      border-radius:8px; color:var(--text); font-family:'DM Sans',sans-serif; font-size:13px;
-      outline:none; transition:border-color var(--ease); width:100%;
-    }
+    .form-input, .form-select, .form-textarea { padding:10px 12px; background:var(--subtle); border:1px solid var(--border); border-radius:8px; color:var(--text); font-family:'DM Sans',sans-serif; font-size:13px; outline:none; transition:border-color var(--ease); width:100%; }
     .form-input:focus, .form-select:focus, .form-textarea:focus { border-color:var(--gold); }
     .form-input::placeholder, .form-textarea::placeholder { color:#3a3630; }
     .form-textarea { resize:vertical; min-height:80px; }
     .form-select option { background:var(--card); }
-
     .modal-footer { padding:16px 24px; border-top:1px solid var(--border); display:flex; gap:10px; justify-content:flex-end; }
     .btn-cancel { padding:10px 18px; background:transparent; border:1px solid var(--border); border-radius:8px; color:var(--muted); font-family:'DM Sans',sans-serif; font-size:13px; cursor:pointer; transition:all var(--ease); }
     .btn-cancel:hover { border-color:var(--text); color:var(--text); }
     .btn-save { padding:10px 22px; background:linear-gradient(135deg,#c9a84c,#a8863a); border:none; border-radius:8px; color:#0d0d0d; font-family:'DM Sans',sans-serif; font-size:13px; font-weight:600; cursor:pointer; transition:opacity var(--ease); }
     .btn-save:hover { opacity:0.88; }
     .btn-save:disabled { opacity:0.4; cursor:not-allowed; }
-
-    /* Section divider inside modal */
     .form-section { font-size:10px; letter-spacing:0.12em; text-transform:uppercase; color:var(--muted); padding-bottom:8px; border-bottom:1px solid var(--border); margin-bottom:4px; grid-column:1/-1; margin-top:8px; }
+
+    /* ── Bulk Import Modal ── */
+    .bulk-modal { max-width:720px; }
+
+    .bulk-tabs { display:flex; gap:0; border-bottom:1px solid var(--border); margin-bottom:24px; }
+    .bulk-tab { padding:10px 20px; font-size:13px; color:var(--muted); cursor:pointer; border-bottom:2px solid transparent; transition:all var(--ease); font-family:'DM Sans',sans-serif; background:none; border-top:none; border-left:none; border-right:none; margin-bottom:-1px; }
+    .bulk-tab.active { color:var(--gold); border-bottom-color:var(--gold); }
+    .bulk-tab:hover:not(.active) { color:var(--text); }
+
+    .bulk-panel { display:none; }
+    .bulk-panel.active { display:block; }
+
+    /* CSV drop zone */
+    .drop-zone {
+      border:2px dashed var(--border); border-radius:12px; padding:40px 20px;
+      text-align:center; cursor:pointer; transition:all var(--ease); position:relative;
+    }
+    .drop-zone:hover, .drop-zone.dragover { border-color:var(--blue); background:var(--blue-bg); }
+    .drop-zone input[type=file] { position:absolute; inset:0; opacity:0; cursor:pointer; }
+    .drop-zone-icon { width:40px; height:40px; margin:0 auto 12px; color:var(--muted); }
+    .drop-zone-text { font-size:14px; color:var(--muted); margin-bottom:6px; }
+    .drop-zone-text strong { color:var(--text); }
+    .drop-zone-sub { font-size:12px; color:var(--muted); opacity:0.6; }
+
+    /* CSV Preview table */
+    .preview-wrap { max-height:300px; overflow:auto; border:1px solid var(--border); border-radius:8px; margin-top:16px; }
+    .preview-wrap table { font-size:12px; }
+    .preview-wrap thead th { padding:8px 12px; font-size:10px; background:var(--subtle); }
+    .preview-wrap tbody td { padding:7px 12px; }
+    .preview-status { display:flex; align-items:center; gap:8px; margin-top:12px; font-size:13px; }
+    .preview-count { color:var(--green); font-weight:500; }
+    .preview-errors { color:var(--red); font-weight:500; }
+
+    /* Manual bulk rows */
+    .bulk-rows-wrap { display:flex; flex-direction:column; gap:8px; max-height:360px; overflow-y:auto; padding-right:4px; }
+    .bulk-row { display:grid; grid-template-columns:2fr 1fr 1fr 1fr 1fr 32px; gap:8px; align-items:center; }
+    .bulk-row-header { display:grid; grid-template-columns:2fr 1fr 1fr 1fr 1fr 32px; gap:8px; margin-bottom:4px; }
+    .bulk-row-header span { font-size:10px; letter-spacing:0.08em; text-transform:uppercase; color:var(--muted); }
+    .bulk-input { padding:8px 10px; background:var(--subtle); border:1px solid var(--border); border-radius:6px; color:var(--text); font-family:'DM Sans',sans-serif; font-size:12px; outline:none; width:100%; transition:border-color var(--ease); }
+    .bulk-input:focus { border-color:var(--gold); }
+    .bulk-input::placeholder { color:#3a3630; font-size:11px; }
+    .btn-row-remove { width:28px; height:28px; border-radius:6px; background:transparent; border:1px solid var(--border); color:var(--muted); cursor:pointer; display:flex; align-items:center; justify-content:center; transition:all var(--ease); flex-shrink:0; }
+    .btn-row-remove:hover { border-color:var(--red); color:var(--red); }
+    .btn-row-remove svg { width:11px; height:11px; }
+    .btn-add-row { display:flex; align-items:center; gap:6px; padding:8px 14px; background:transparent; border:1px dashed var(--border); border-radius:8px; color:var(--muted); font-size:12px; cursor:pointer; font-family:'DM Sans',sans-serif; transition:all var(--ease); margin-top:4px; }
+    .btn-add-row:hover { border-color:var(--gold); color:var(--gold); }
+    .btn-add-row svg { width:12px; height:12px; }
+
+    /* Import progress */
+    .import-progress { display:none; }
+    .import-progress.show { display:block; }
+    .progress-bar-wrap { height:6px; background:var(--border); border-radius:3px; overflow:hidden; margin:12px 0; }
+    .progress-bar-fill { height:100%; background:linear-gradient(90deg,var(--gold),var(--gold-light)); border-radius:3px; transition:width 0.3s ease; }
+    .import-log { max-height:120px; overflow-y:auto; font-size:12px; color:var(--muted); font-family:monospace; background:var(--subtle); border-radius:6px; padding:10px 12px; }
+    .import-log .ok { color:var(--green); }
+    .import-log .err { color:var(--red); }
 
     /* Toast */
     #toast { position:fixed; bottom:24px; right:24px; padding:12px 18px; border-radius:10px; font-size:13px; box-shadow:0 8px 24px rgba(0,0,0,0.4); transform:translateY(80px); opacity:0; transition:all 0.3s cubic-bezier(0.22,1,0.36,1); z-index:999; pointer-events:none; max-width:320px; }
     #toast.show { transform:translateY(0); opacity:1; }
     #toast.success { background:#0d2414; border:1px solid #1a5c30; color:#4ade80; }
     #toast.error   { background:#2a1212; border:1px solid #7f2020; color:#f87171; }
+    #toast.info    { background:#0d1a2a; border:1px solid #1a3a5c; color:#60a5fa; }
 
-    @media(max-width:900px){ .layout{grid-template-columns:1fr} .sidebar{display:none} .main{padding:20px 16px} .stats-row{grid-template-columns:1fr 1fr} .form-grid{grid-template-columns:1fr} }
+    @media(max-width:900px){ .layout{grid-template-columns:1fr} .sidebar{display:none} .main{padding:20px 16px} .stats-row{grid-template-columns:1fr 1fr} .form-grid{grid-template-columns:1fr} .bulk-row{grid-template-columns:1fr 1fr; } }
   </style>
 </head>
 <body>
@@ -210,10 +284,20 @@
         <div class="page-title">Products</div>
         <div class="page-sub">Manage your product catalogue and stock levels</div>
       </div>
-      <button class="btn-add" onclick="openModal()">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-        Add Product
-      </button>
+      <div class="header-actions">
+        <button class="btn-template" onclick="downloadTemplate()">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+          CSV Template
+        </button>
+        <button class="btn-bulk" onclick="openBulkModal()">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+          Bulk Import
+        </button>
+        <button class="btn-add" onclick="openModal()">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+          Add Product
+        </button>
+      </div>
     </div>
 
     <!-- Stats -->
@@ -250,13 +334,8 @@
       <table>
         <thead>
           <tr>
-            <th>Product</th>
-            <th>Category</th>
-            <th>Price</th>
-            <th>Cost</th>
-            <th>Stock</th>
-            <th>Status</th>
-            <th>Actions</th>
+            <th>Product</th><th>Category</th><th>Price</th><th>Cost</th>
+            <th>Stock</th><th>Status</th><th>Actions</th>
           </tr>
         </thead>
         <tbody id="tableBody">
@@ -267,7 +346,9 @@
   </main>
 </div>
 
-<!-- Add / Edit Modal -->
+<!-- ══════════════════════════════════════════
+     Add / Edit Modal
+══════════════════════════════════════════ -->
 <div class="modal-overlay" id="modalOverlay" onclick="handleOverlayClick(event)">
   <div class="modal">
     <div class="modal-header">
@@ -279,77 +360,126 @@
     <div class="modal-body">
       <div class="form-grid">
         <div class="form-section">Basic Information</div>
-
         <div class="form-group full">
           <label class="form-label">Product Name *</label>
           <input type="text" class="form-input" id="fName" placeholder="e.g. Premium Widget" />
         </div>
-
         <div class="form-group">
           <label class="form-label">SKU</label>
           <input type="text" class="form-input" id="fSku" placeholder="e.g. WGT-001" />
         </div>
-
         <div class="form-group">
           <label class="form-label">Barcode</label>
           <input type="text" class="form-input" id="fBarcode" placeholder="e.g. 1234567890123" />
         </div>
-
         <div class="form-group">
           <label class="form-label">Category</label>
-          <select class="form-select" id="fCategory">
-            <option value="">No Category</option>
-          </select>
+          <select class="form-select" id="fCategory"><option value="">No Category</option></select>
         </div>
-
         <div class="form-group">
           <label class="form-label">Unit</label>
           <input type="text" class="form-input" id="fUnit" placeholder="e.g. pcs, kg, litre" />
         </div>
-
         <div class="form-group full">
           <label class="form-label">Description</label>
           <textarea class="form-textarea" id="fDescription" placeholder="Optional product description…"></textarea>
         </div>
-
-        <div class="form-section">Pricing & Stock</div>
-
+        <div class="form-section">Pricing &amp; Stock</div>
         <div class="form-group">
           <label class="form-label">Selling Price *</label>
           <input type="number" class="form-input" id="fPrice" placeholder="0.00" min="0" step="0.01" />
         </div>
-
         <div class="form-group">
           <label class="form-label">Cost Price</label>
           <input type="number" class="form-input" id="fCostPrice" placeholder="0.00" min="0" step="0.01" />
         </div>
-
         <div class="form-group">
           <label class="form-label">Stock Quantity *</label>
           <input type="number" class="form-input" id="fStock" placeholder="0" min="0" />
         </div>
-
         <div class="form-group">
           <label class="form-label">Low Stock Threshold</label>
           <input type="number" class="form-input" id="fLowStock" placeholder="5" min="0" />
         </div>
-
         <div class="form-group">
           <label class="form-label">Tax Rate (%)</label>
           <input type="number" class="form-input" id="fTaxRate" placeholder="0" min="0" max="100" step="0.1" />
         </div>
-
         <div class="form-group">
           <label class="form-label">Supplier</label>
-          <select class="form-select" id="fSupplier">
-            <option value="">No Supplier</option>
-          </select>
+          <select class="form-select" id="fSupplier"><option value="">No Supplier</option></select>
         </div>
       </div>
     </div>
     <div class="modal-footer">
       <button class="btn-cancel" onclick="closeModal()">Cancel</button>
       <button class="btn-save" id="saveBtn" onclick="saveProduct()">Save Product</button>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════
+     Bulk Import Modal
+══════════════════════════════════════════ -->
+<div class="modal-overlay" id="bulkModalOverlay" onclick="handleBulkOverlayClick(event)">
+  <div class="modal bulk-modal">
+    <div class="modal-header">
+      <div class="modal-title">Bulk Import Products</div>
+      <button class="modal-close" onclick="closeBulkModal()">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>
+    </div>
+    <div class="modal-body">
+
+      <!-- Tabs -->
+      <div class="bulk-tabs">
+        <button class="bulk-tab active" onclick="switchBulkTab('csv', this)">📄 Upload CSV</button>
+        <button class="bulk-tab" onclick="switchBulkTab('manual', this)">✏️ Enter Manually</button>
+      </div>
+
+      <!-- CSV Panel -->
+      <div class="bulk-panel active" id="panel-csv">
+        <div class="drop-zone" id="dropZone">
+          <input type="file" id="csvFile" accept=".csv" onchange="handleCSVFile(this.files[0])" />
+          <svg class="drop-zone-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+          <div class="drop-zone-text"><strong>Drop your CSV here</strong> or click to browse</div>
+          <div class="drop-zone-sub">Supports .csv files · Download the template below for correct format</div>
+        </div>
+
+        <div id="csvPreview" style="display:none;">
+          <div class="preview-status">
+            <span class="preview-count" id="previewCount"></span>
+            <span class="preview-errors" id="previewErrors"></span>
+          </div>
+          <div class="preview-wrap" id="previewWrap"></div>
+        </div>
+
+        <div class="import-progress" id="importProgress">
+          <div style="display:flex;justify-content:space-between;font-size:12px;color:var(--muted);margin-bottom:4px;">
+            <span id="progressLabel">Importing…</span>
+            <span id="progressPct">0%</span>
+          </div>
+          <div class="progress-bar-wrap"><div class="progress-bar-fill" id="progressBar" style="width:0%"></div></div>
+          <div class="import-log" id="importLog"></div>
+        </div>
+      </div>
+
+      <!-- Manual Panel -->
+      <div class="bulk-panel" id="panel-manual">
+        <div class="bulk-row-header">
+          <span>Name *</span><span>SKU</span><span>Price *</span><span>Cost</span><span>Stock</span><span></span>
+        </div>
+        <div class="bulk-rows-wrap" id="bulkRowsWrap"></div>
+        <button class="btn-add-row" onclick="addBulkRow()">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+          Add Row
+        </button>
+      </div>
+
+    </div>
+    <div class="modal-footer">
+      <button class="btn-cancel" onclick="closeBulkModal()">Cancel</button>
+      <button class="btn-save" id="bulkSaveBtn" onclick="runBulkImport()">Import Products</button>
     </div>
   </div>
 </div>
@@ -364,20 +494,17 @@
   const token = localStorage.getItem('cnjohnson_access_token');
   const auth  = JSON.parse(localStorage.getItem('cnjohnson_auth') || 'null');
   if (!token || !auth) { window.location.href = 'login.html'; return; }
-
   document.getElementById('sidebarRole').textContent = auth.name || auth.role;
 
-  const headers = {
-    'Content-Type': 'application/json',
-    'Authorization': `Bearer ${token}`,
-  };
+  const headers = { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` };
 
-  let allProducts  = [];
-  let categories   = [];
-  let suppliers    = [];
-  let editingId    = null;
+  let allProducts = [], categories = [], suppliers = [], editingId = null;
+  let csvRows = []; // parsed CSV data
+  let activeBulkTab = 'csv';
 
-  /* ── Load everything ── */
+  /* ══════════════════════════════════
+     LOAD
+  ══════════════════════════════════ */
   window.loadAll = async () => {
     document.getElementById('tableBody').innerHTML =
       '<tr class="loading-row"><td colspan="7"><div class="spinner"></div></td></tr>';
@@ -390,8 +517,7 @@
       const data = await res.json();
       if (!res.ok) throw new Error(data.message);
       allProducts = data.products || [];
-      updateStats();
-      renderTable(allProducts);
+      updateStats(); renderTable(allProducts);
     } catch (err) {
       showToast('Failed to load products: ' + err.message, 'error');
       document.getElementById('tableBody').innerHTML =
@@ -404,10 +530,7 @@
       const res  = await fetch(`${API}/api/products/categories`, { headers });
       const data = await res.json();
       categories = data.categories || data.data || [];
-    } catch (_) {
-      // Categories endpoint may not exist — that's ok
-      categories = [...new Set(allProducts.map(p => p.category).filter(Boolean))].map(c => ({ id: c.id, name: c.name }));
-    }
+    } catch (_) {}
     populateCategorySelects();
   }
 
@@ -421,18 +544,15 @@
   }
 
   function populateCategorySelects() {
-    // Derive from loaded products if API didn't return them
     if (!categories.length) {
       const seen = new Map();
       allProducts.forEach(p => { if (p.category) seen.set(p.category.id, p.category); });
       categories = [...seen.values()];
     }
-
     const filterSel = document.getElementById('categoryFilter');
     const formSel   = document.getElementById('fCategory');
-    const existing  = filterSel.querySelectorAll('option:not([value=""])');
-    existing.forEach(o => o.remove());
-
+    filterSel.querySelectorAll('option:not([value=""])').forEach(o => o.remove());
+    formSel.querySelectorAll('option:not([value=""])').forEach(o => o.remove());
     categories.forEach(c => {
       filterSel.insertAdjacentHTML('beforeend', `<option value="${c.id}">${esc(c.name)}</option>`);
       formSel.insertAdjacentHTML('beforeend',   `<option value="${c.id}">${esc(c.name)}</option>`);
@@ -442,40 +562,36 @@
   function populateSupplierSelect() {
     const sel = document.getElementById('fSupplier');
     sel.querySelectorAll('option:not([value=""])').forEach(o => o.remove());
-    suppliers.forEach(s => {
-      sel.insertAdjacentHTML('beforeend', `<option value="${s.id}">${esc(s.name)}</option>`);
-    });
+    suppliers.forEach(s => sel.insertAdjacentHTML('beforeend', `<option value="${s.id}">${esc(s.name)}</option>`));
   }
 
-  /* ── Stats ── */
+  /* ══════════════════════════════════
+     STATS & FILTERS
+  ══════════════════════════════════ */
   function updateStats() {
     const low = 5;
-    const inStock = allProducts.filter(p => p.stock > low).length;
-    const lowStock = allProducts.filter(p => p.stock > 0 && p.stock <= (p.lowStockThreshold || low)).length;
-    const outStock = allProducts.filter(p => p.stock <= 0).length;
     document.getElementById('statTotal').textContent   = allProducts.length;
-    document.getElementById('statInStock').textContent = inStock;
-    document.getElementById('statLow').textContent     = lowStock;
-    document.getElementById('statOut').textContent     = outStock;
+    document.getElementById('statInStock').textContent = allProducts.filter(p => p.stock > low).length;
+    document.getElementById('statLow').textContent     = allProducts.filter(p => p.stock > 0 && p.stock <= (p.lowStockThreshold || low)).length;
+    document.getElementById('statOut').textContent     = allProducts.filter(p => p.stock <= 0).length;
   }
 
-  /* ── Filters ── */
   window.applyFilters = () => {
     const q     = document.getElementById('searchInput').value.toLowerCase();
     const catId = document.getElementById('categoryFilter').value;
     const stock = document.getElementById('stockFilter').value;
-
     let list = allProducts;
     if (q)     list = list.filter(p => p.name.toLowerCase().includes(q) || (p.sku||'').toLowerCase().includes(q) || (p.barcode||'').toLowerCase().includes(q));
     if (catId) list = list.filter(p => p.categoryId === catId);
     if (stock === 'ok')  list = list.filter(p => p.stock > (p.lowStockThreshold || 5));
     if (stock === 'low') list = list.filter(p => p.stock > 0 && p.stock <= (p.lowStockThreshold || 5));
     if (stock === 'out') list = list.filter(p => p.stock <= 0);
-
     renderTable(list);
   };
 
-  /* ── Render table ── */
+  /* ══════════════════════════════════
+     TABLE RENDER
+  ══════════════════════════════════ */
   function renderTable(list) {
     if (!list.length) {
       document.getElementById('tableBody').innerHTML = `
@@ -491,61 +607,38 @@
         </td></tr>`;
       return;
     }
-
     document.getElementById('tableBody').innerHTML = list.map(p => {
       const threshold  = p.lowStockThreshold || 5;
       const stockClass = p.stock <= 0 ? 'out' : p.stock <= threshold ? 'low' : 'ok';
       const barPct     = Math.min(100, (p.stock / Math.max(p.stock, threshold * 3)) * 100);
-
-      return `
-      <tr>
-        <td>
-          <div class="prod-name-cell">
-            <div class="prod-icon">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/></svg>
-            </div>
-            <div>
-              <div class="prod-name">${esc(p.name)}</div>
-              <div class="prod-sku">${p.sku ? esc(p.sku) : p.barcode ? esc(p.barcode) : '—'}</div>
-            </div>
-          </div>
-        </td>
+      return `<tr>
+        <td><div class="prod-name-cell">
+          <div class="prod-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/></svg></div>
+          <div><div class="prod-name">${esc(p.name)}</div><div class="prod-sku">${p.sku ? esc(p.sku) : p.barcode ? esc(p.barcode) : '—'}</div></div>
+        </div></td>
         <td style="color:var(--muted);font-size:12px">${p.category ? esc(p.category.name) : '—'}</td>
         <td><span class="price-cell">₦${fmt(p.price)}</span></td>
-        <td><span class="cost-cell">${p.costPrice ? '₦' + fmt(p.costPrice) : '—'}</span></td>
-        <td>
-          <div class="stock-cell">
-            <span class="stock-num ${stockClass}">${p.stock}</span>
-            <div class="stock-bar"><div class="stock-bar-fill ${stockClass}" style="width:${barPct}%"></div></div>
-          </div>
-        </td>
+        <td><span class="cost-cell">${p.costPrice ? '₦'+fmt(p.costPrice) : '—'}</span></td>
+        <td><div class="stock-cell"><span class="stock-num ${stockClass}">${p.stock}</span><div class="stock-bar"><div class="stock-bar-fill ${stockClass}" style="width:${barPct}%"></div></div></div></td>
         <td><span class="badge ${p.active !== false ? 'badge-active' : 'badge-inactive'}">${p.active !== false ? 'Active' : 'Inactive'}</span></td>
-        <td>
-          <div class="actions">
-            <button class="btn-icon" title="Edit" onclick="openModal('${p.id}')">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
-            </button>
-            <button class="btn-icon" title="Adjust Stock" onclick="adjustStock('${p.id}', '${esc(p.name)}', ${p.stock})">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-            </button>
-            <button class="btn-icon danger" title="Delete" onclick="deleteProduct('${p.id}', '${esc(p.name)}')">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4h6v2"/></svg>
-            </button>
-          </div>
-        </td>
+        <td><div class="actions">
+          <button class="btn-icon" title="Edit" onclick="openModal('${p.id}')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></button>
+          <button class="btn-icon" title="Adjust Stock" onclick="adjustStock('${p.id}','${esc(p.name)}',${p.stock})"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg></button>
+          <button class="btn-icon danger" title="Delete" onclick="deleteProduct('${p.id}','${esc(p.name)}')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4h6v2"/></svg></button>
+        </div></td>
       </tr>`;
     }).join('');
   }
 
-  /* ── Open modal ── */
+  /* ══════════════════════════════════
+     SINGLE PRODUCT MODAL
+  ══════════════════════════════════ */
   window.openModal = (id = null) => {
     editingId = id;
     document.getElementById('modalTitle').textContent = id ? 'Edit Product' : 'Add Product';
     document.getElementById('saveBtn').textContent    = id ? 'Update Product' : 'Save Product';
-
     if (id) {
-      const p = allProducts.find(x => x.id === id);
-      if (!p) return;
+      const p = allProducts.find(x => x.id === id); if (!p) return;
       document.getElementById('fName').value        = p.name || '';
       document.getElementById('fSku').value         = p.sku || '';
       document.getElementById('fBarcode').value     = p.barcode || '';
@@ -559,100 +652,295 @@
       document.getElementById('fTaxRate').value     = p.taxRate || '';
       document.getElementById('fSupplier').value    = p.supplierId || '';
     } else {
-      document.getElementById('fName').value        = '';
-      document.getElementById('fSku').value         = '';
-      document.getElementById('fBarcode').value     = '';
-      document.getElementById('fCategory').value    = '';
-      document.getElementById('fUnit').value        = '';
-      document.getElementById('fDescription').value = '';
-      document.getElementById('fPrice').value       = '';
-      document.getElementById('fCostPrice').value   = '';
-      document.getElementById('fStock').value       = '0';
-      document.getElementById('fLowStock').value    = '5';
-      document.getElementById('fTaxRate').value     = '';
-      document.getElementById('fSupplier').value    = '';
+      ['fName','fSku','fBarcode','fUnit','fDescription','fPrice','fCostPrice','fTaxRate'].forEach(id => document.getElementById(id).value = '');
+      document.getElementById('fCategory').value = '';
+      document.getElementById('fSupplier').value = '';
+      document.getElementById('fStock').value    = '0';
+      document.getElementById('fLowStock').value = '5';
     }
-
     document.getElementById('modalOverlay').classList.add('open');
   };
 
-  window.closeModal = () => {
-    document.getElementById('modalOverlay').classList.remove('open');
-    editingId = null;
-  };
+  window.closeModal = () => { document.getElementById('modalOverlay').classList.remove('open'); editingId = null; };
+  window.handleOverlayClick = e => { if (e.target === document.getElementById('modalOverlay')) closeModal(); };
 
-  window.handleOverlayClick = (e) => {
-    if (e.target === document.getElementById('modalOverlay')) closeModal();
-  };
-
-  /* ── Save product ── */
   window.saveProduct = async () => {
     const name  = document.getElementById('fName').value.trim();
     const price = parseFloat(document.getElementById('fPrice').value);
     const stock = parseInt(document.getElementById('fStock').value);
-
-    if (!name)          return showToast('Product name is required', 'error');
-    if (isNaN(price))   return showToast('Selling price is required', 'error');
-    if (isNaN(stock))   return showToast('Stock quantity is required', 'error');
+    if (!name)        return showToast('Product name is required', 'error');
+    if (isNaN(price)) return showToast('Selling price is required', 'error');
+    if (isNaN(stock)) return showToast('Stock quantity is required', 'error');
 
     const payload = {
-      name,
+      name, price, stock,
       sku:               document.getElementById('fSku').value.trim()         || undefined,
       barcode:           document.getElementById('fBarcode').value.trim()     || undefined,
       categoryId:        document.getElementById('fCategory').value           || undefined,
       unit:              document.getElementById('fUnit').value.trim()        || undefined,
       description:       document.getElementById('fDescription').value.trim() || undefined,
-      price,
       costPrice:         parseFloat(document.getElementById('fCostPrice').value) || undefined,
-      stock,
-      lowStockThreshold: parseInt(document.getElementById('fLowStock').value) || undefined,
-      taxRate:           parseFloat(document.getElementById('fTaxRate').value) || undefined,
-      supplierId:        document.getElementById('fSupplier').value           || undefined,
+      lowStockThreshold: parseInt(document.getElementById('fLowStock').value)    || undefined,
+      taxRate:           parseFloat(document.getElementById('fTaxRate').value)   || undefined,
+      supplierId:        document.getElementById('fSupplier').value              || undefined,
     };
 
     const btn = document.getElementById('saveBtn');
-    btn.disabled = true;
-    btn.textContent = editingId ? 'Updating…' : 'Saving…';
-
+    btn.disabled = true; btn.textContent = editingId ? 'Updating…' : 'Saving…';
     try {
       const url    = editingId ? `${API}/api/products/${editingId}` : `${API}/api/products`;
       const method = editingId ? 'PUT' : 'POST';
       const res    = await fetch(url, { method, headers, body: JSON.stringify(payload) });
       const data   = await res.json();
       if (!res.ok) throw new Error(data.message);
-
       showToast(editingId ? '✓ Product updated' : '✓ Product added', 'success');
-      closeModal();
-      await loadProducts();
-    } catch (err) {
-      showToast('Error: ' + err.message, 'error');
-    } finally {
-      btn.disabled = false;
-      btn.textContent = editingId ? 'Update Product' : 'Save Product';
-    }
+      closeModal(); await loadProducts();
+    } catch (err) { showToast('Error: ' + err.message, 'error'); }
+    finally { btn.disabled = false; btn.textContent = editingId ? 'Update Product' : 'Save Product'; }
   };
 
-  /* ── Adjust stock ── */
+  /* ══════════════════════════════════
+     CSV TEMPLATE DOWNLOAD
+  ══════════════════════════════════ */
+  window.downloadTemplate = () => {
+    const headers = ['name','sku','barcode','category','unit','description','price','costPrice','stock','lowStockThreshold','taxRate'];
+    const example = [
+      'Dangote Cement 50kg,DNG-CEM-50,8901234567890,Building Materials,bag,Premium grade cement,4500,3800,100,20,7.5',
+      'Indomie Noodles Carton,IDM-NOO-CTN,8901234567891,Food & Beverages,carton,Indomie chicken flavor x40,3200,2700,50,10,0',
+      'Sunlight Soap 800g,SUN-SOP-800,,Household,piece,,850,650,200,15,0',
+    ];
+    const csv = [headers.join(','), ...example].join('\n');
+    const blob = new Blob([csv], { type: 'text/csv' });
+    const url  = URL.createObjectURL(blob);
+    const a    = Object.assign(document.createElement('a'), { href: url, download: 'cnjohnson_products_template.csv' });
+    a.click(); URL.revokeObjectURL(url);
+    showToast('Template downloaded', 'info');
+  };
+
+  /* ══════════════════════════════════
+     BULK IMPORT MODAL
+  ══════════════════════════════════ */
+  window.openBulkModal = () => {
+    csvRows = [];
+    document.getElementById('csvPreview').style.display = 'none';
+    document.getElementById('importProgress').classList.remove('show');
+    document.getElementById('csvFile').value = '';
+    resetBulkRows();
+    switchBulkTab('csv', document.querySelector('.bulk-tab'));
+    document.getElementById('bulkModalOverlay').classList.add('open');
+  };
+
+  window.closeBulkModal = () => { document.getElementById('bulkModalOverlay').classList.remove('open'); };
+  window.handleBulkOverlayClick = e => { if (e.target === document.getElementById('bulkModalOverlay')) closeBulkModal(); };
+
+  window.switchBulkTab = (tab, el) => {
+    activeBulkTab = tab;
+    document.querySelectorAll('.bulk-tab').forEach(t => t.classList.remove('active'));
+    el.classList.add('active');
+    document.querySelectorAll('.bulk-panel').forEach(p => p.classList.remove('active'));
+    document.getElementById(`panel-${tab}`).classList.add('active');
+  };
+
+  /* ── Drag & drop ── */
+  const dropZone = document.getElementById('dropZone');
+  dropZone.addEventListener('dragover',  e => { e.preventDefault(); dropZone.classList.add('dragover'); });
+  dropZone.addEventListener('dragleave', () => dropZone.classList.remove('dragover'));
+  dropZone.addEventListener('drop', e => {
+    e.preventDefault(); dropZone.classList.remove('dragover');
+    const file = e.dataTransfer.files[0];
+    if (file && file.name.endsWith('.csv')) handleCSVFile(file);
+    else showToast('Please drop a .csv file', 'error');
+  });
+
+  /* ── Parse CSV ── */
+  window.handleCSVFile = (file) => {
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = e => {
+      const text = e.target.result;
+      parseCSV(text);
+    };
+    reader.readAsText(file);
+  };
+
+  function parseCSV(text) {
+    const lines = text.trim().split('\n').map(l => l.trim()).filter(Boolean);
+    if (lines.length < 2) return showToast('CSV file is empty or has no data rows', 'error');
+
+    const colMap = {};
+    const expectedCols = ['name','sku','barcode','category','unit','description','price','costprice','stock','lowstockthreshold','taxrate'];
+    const headerLine = lines[0].toLowerCase().split(',').map(h => h.trim().replace(/['"]/g,''));
+
+    headerLine.forEach((h, i) => {
+      const clean = h.replace(/\s+/g,'').replace(/_/g,'');
+      expectedCols.forEach(col => { if (clean === col) colMap[col] = i; });
+    });
+
+    if (colMap['name'] === undefined || colMap['price'] === undefined) {
+      return showToast('CSV must have at least "name" and "price" columns', 'error');
+    }
+
+    const rows = []; const errors = [];
+    lines.slice(1).forEach((line, idx) => {
+      const cols = line.split(',').map(c => c.trim().replace(/^["']|["']$/g,''));
+      const name  = cols[colMap['name']] || '';
+      const price = parseFloat(cols[colMap['price']]);
+      if (!name) { errors.push(`Row ${idx+2}: missing name`); return; }
+      if (isNaN(price)) { errors.push(`Row ${idx+2}: invalid price`); return; }
+      rows.push({
+        name,
+        sku:               cols[colMap['sku']]               || '',
+        barcode:           cols[colMap['barcode']]           || '',
+        category:          cols[colMap['category']]          || '',
+        unit:              cols[colMap['unit']]              || '',
+        description:       cols[colMap['description']]       || '',
+        price,
+        costPrice:         parseFloat(cols[colMap['costprice']])         || 0,
+        stock:             parseInt(cols[colMap['stock']])               || 0,
+        lowStockThreshold: parseInt(cols[colMap['lowstockthreshold']])   || 5,
+        taxRate:           parseFloat(cols[colMap['taxrate']])           || 0,
+      });
+    });
+
+    csvRows = rows;
+    renderCSVPreview(rows, errors);
+  }
+
+  function renderCSVPreview(rows, errors) {
+    const wrap = document.getElementById('csvPreview');
+    document.getElementById('previewCount').textContent = `✓ ${rows.length} valid row${rows.length !== 1 ? 's' : ''} ready to import`;
+    document.getElementById('previewErrors').textContent = errors.length ? `✗ ${errors.length} error${errors.length > 1 ? 's' : ''}` : '';
+    document.getElementById('previewWrap').innerHTML = `
+      <table>
+        <thead><tr><th>#</th><th>Name</th><th>SKU</th><th>Price</th><th>Cost</th><th>Stock</th><th>Category</th></tr></thead>
+        <tbody>${rows.slice(0,20).map((r,i) => `
+          <tr>
+            <td style="color:var(--muted)">${i+1}</td>
+            <td>${esc(r.name)}</td>
+            <td style="color:var(--muted);font-size:11px">${esc(r.sku)||'—'}</td>
+            <td>₦${fmt(r.price)}</td>
+            <td style="color:var(--muted)">₦${fmt(r.costPrice)}</td>
+            <td>${r.stock}</td>
+            <td style="color:var(--muted);font-size:11px">${esc(r.category)||'—'}</td>
+          </tr>`).join('')}
+        ${rows.length > 20 ? `<tr><td colspan="7" style="text-align:center;color:var(--muted);padding:8px">… and ${rows.length - 20} more rows</td></tr>` : ''}
+        </tbody>
+      </table>`;
+    wrap.style.display = 'block';
+  }
+
+  /* ── Manual bulk rows ── */
+  function resetBulkRows() {
+    const wrap = document.getElementById('bulkRowsWrap');
+    wrap.innerHTML = '';
+    for (let i = 0; i < 3; i++) addBulkRow();
+  }
+
+  window.addBulkRow = () => {
+    const wrap = document.getElementById('bulkRowsWrap');
+    const row  = document.createElement('div');
+    row.className = 'bulk-row';
+    row.innerHTML = `
+      <input class="bulk-input" placeholder="Product name *" data-field="name" />
+      <input class="bulk-input" placeholder="SKU" data-field="sku" />
+      <input class="bulk-input" type="number" placeholder="Price *" data-field="price" min="0" step="0.01"/>
+      <input class="bulk-input" type="number" placeholder="Cost" data-field="cost" min="0" step="0.01"/>
+      <input class="bulk-input" type="number" placeholder="Stock" data-field="stock" min="0" value="0"/>
+      <button class="btn-row-remove" onclick="this.parentElement.remove()">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>`;
+    wrap.appendChild(row);
+  };
+
+  /* ── Run import ── */
+  window.runBulkImport = async () => {
+    let rows = [];
+
+    if (activeBulkTab === 'csv') {
+      if (!csvRows.length) return showToast('No valid CSV data to import', 'error');
+      rows = csvRows;
+    } else {
+      // Collect manual rows
+      document.querySelectorAll('#bulkRowsWrap .bulk-row').forEach(row => {
+        const name  = row.querySelector('[data-field="name"]').value.trim();
+        const price = parseFloat(row.querySelector('[data-field="price"]').value);
+        const stock = parseInt(row.querySelector('[data-field="stock"]').value) || 0;
+        const cost  = parseFloat(row.querySelector('[data-field="cost"]').value)  || 0;
+        const sku   = row.querySelector('[data-field="sku"]').value.trim();
+        if (name && !isNaN(price)) rows.push({ name, price, stock, costPrice: cost, sku });
+      });
+      if (!rows.length) return showToast('Add at least one product with name and price', 'error');
+    }
+
+    // Show progress UI
+    const progressEl = document.getElementById('importProgress');
+    const progressBar = document.getElementById('progressBar');
+    const progressLabel = document.getElementById('progressLabel');
+    const progressPct = document.getElementById('progressPct');
+    const logEl = document.getElementById('importLog');
+    progressEl.classList.add('show');
+    logEl.innerHTML = '';
+
+    const btn = document.getElementById('bulkSaveBtn');
+    btn.disabled = true; btn.textContent = 'Importing…';
+
+    let done = 0, success = 0, failed = 0;
+
+    for (const row of rows) {
+      try {
+        const payload = {
+          name:     row.name,
+          price:    row.price,
+          stock:    row.stock  || 0,
+          sku:      row.sku    || undefined,
+          barcode:  row.barcode || undefined,
+          unit:     row.unit   || undefined,
+          description: row.description || undefined,
+          costPrice:   row.costPrice   || undefined,
+          lowStockThreshold: row.lowStockThreshold || undefined,
+          taxRate:   row.taxRate || undefined,
+        };
+        const res  = await fetch(`${API}/api/products`, { method: 'POST', headers, body: JSON.stringify(payload) });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.message);
+        success++;
+        logEl.insertAdjacentHTML('beforeend', `<div class="ok">✓ ${esc(row.name)}</div>`);
+      } catch (err) {
+        failed++;
+        logEl.insertAdjacentHTML('beforeend', `<div class="err">✗ ${esc(row.name)}: ${err.message}</div>`);
+      }
+      done++;
+      const pct = Math.round((done / rows.length) * 100);
+      progressBar.style.width = pct + '%';
+      progressPct.textContent = pct + '%';
+      progressLabel.textContent = `Importing ${done} / ${rows.length}…`;
+      logEl.scrollTop = logEl.scrollHeight;
+    }
+
+    progressLabel.textContent = `Done — ${success} imported, ${failed} failed`;
+    btn.disabled = false; btn.textContent = 'Import Products';
+    showToast(`✓ Imported ${success} product${success !== 1 ? 's' : ''}${failed ? `, ${failed} failed` : ''}`, success > 0 ? 'success' : 'error');
+
+    if (success > 0) { await loadProducts(); }
+  };
+
+  /* ══════════════════════════════════
+     ADJUST STOCK & DELETE
+  ══════════════════════════════════ */
   window.adjustStock = async (id, name, current) => {
     const val = prompt(`Adjust stock for "${name}"\nCurrent: ${current}\n\nEnter new quantity:`);
     if (val === null) return;
     const qty = parseInt(val);
     if (isNaN(qty) || qty < 0) return showToast('Invalid quantity', 'error');
-
     try {
-      const res  = await fetch(`${API}/api/products/${id}/stock`, {
-        method: 'PATCH', headers, body: JSON.stringify({ quantity: qty }),
-      });
+      const res  = await fetch(`${API}/api/products/${id}/stock`, { method: 'PATCH', headers, body: JSON.stringify({ quantity: qty }) });
       const data = await res.json();
       if (!res.ok) throw new Error(data.message);
       showToast(`✓ Stock updated to ${qty}`, 'success');
       await loadProducts();
-    } catch (err) {
-      showToast('Error: ' + err.message, 'error');
-    }
+    } catch (err) { showToast('Error: ' + err.message, 'error'); }
   };
 
-  /* ── Delete product ── */
   window.deleteProduct = async (id, name) => {
     if (!confirm(`Delete "${name}"? This cannot be undone.`)) return;
     try {
@@ -661,19 +949,18 @@
       if (!res.ok) throw new Error(data.message);
       showToast('Product deleted', 'success');
       await loadProducts();
-    } catch (err) {
-      showToast('Error: ' + err.message, 'error');
-    }
+    } catch (err) { showToast('Error: ' + err.message, 'error'); }
   };
 
-  /* ── Logout ── */
+  /* ══════════════════════════════════
+     HELPERS
+  ══════════════════════════════════ */
   window.logout = () => {
     localStorage.removeItem('cnjohnson_access_token');
     localStorage.removeItem('cnjohnson_auth');
     window.location.href = 'login.html';
   };
 
-  /* ── Helpers ── */
   function fmt(n) { return Number(n).toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ','); }
   function esc(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
 
@@ -685,10 +972,8 @@
     toastTimer = setTimeout(() => { t.className = type; }, 3500);
   }
 
-  document.addEventListener('keydown', e => {
-    if (e.key === 'Escape') closeModal();
-  });
-
+  document.addEventListener('keydown', e => { if (e.key === 'Escape') { closeModal(); closeBulkModal(); } });
+  resetBulkRows();
   loadAll();
 })();
 </script>

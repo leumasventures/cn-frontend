@@ -35,59 +35,12 @@ const defaultState = () => ({
   },
   // ── BULK DISCOUNT TIERS ─────────────────────────────────────
   // Each tier: { id, name, minQty, maxQty, discountPct, productIds ([] = all), active }
-  bulkDiscountTiers: [
-    { id: 'BD001', name: 'Small Bulk', minQty: 5, maxQty: 9, discountPct: 3, productIds: [], active: true },
-    { id: 'BD002', name: 'Medium Bulk', minQty: 10, maxQty: 19, discountPct: 5, productIds: [], active: true },
-    { id: 'BD003', name: 'Large Bulk', minQty: 20, maxQty: 49, discountPct: 8, productIds: [], active: true },
-    { id: 'BD004', name: 'Wholesale', minQty: 50, maxQty: 99, discountPct: 12, productIds: [], active: true },
-    { id: 'BD005', name: 'Mega Wholesale', minQty: 100, maxQty: 99999, discountPct: 15, productIds: [], active: true },
-  ],
-  warehouses: [
-    { id: 'wh1', name: 'Main Store – Aba', location: 'Aba', manager: 'C.N. Johnson' },
-    { id: 'wh2', name: 'Branch – Port Harcourt', location: 'PH', manager: 'Emeka Okafor' },
-  ],
-  products: [
-    { id: 'P001', name: 'Premium Palm Oil (25L)', sku: 'PO-25L', category: 'Edible Oils', unit: 'Keg',
-      costPrice: 18500, sellingPrice: 22000, stock: { wh1: 40, wh2: 15 }, reorderLevel: 10,
-      supplierId: 'S001', description: 'Premium refined palm oil, 25 litres', barcode: '' },
-    { id: 'P002', name: 'Groundnut Oil (20L)', sku: 'GO-20L', category: 'Edible Oils', unit: 'Keg',
-      costPrice: 24000, sellingPrice: 28500, stock: { wh1: 25, wh2: 8 }, reorderLevel: 8,
-      supplierId: 'S001', description: 'Pure groundnut oil, 20 litres', barcode: '' },
-    { id: 'P003', name: 'Soya Oil (20L)', sku: 'SO-20L', category: 'Edible Oils', unit: 'Keg',
-      costPrice: 22000, sellingPrice: 26000, stock: { wh1: 18, wh2: 5 }, reorderLevel: 8,
-      supplierId: 'S002', description: 'Refined soya bean oil, 20 litres', barcode: '' },
-    { id: 'P004', name: 'Sugar (50kg)', sku: 'SG-50K', category: 'Food Staples', unit: 'Bag',
-      costPrice: 48000, sellingPrice: 55000, stock: { wh1: 30, wh2: 12 }, reorderLevel: 10,
-      supplierId: 'S002', description: 'White refined sugar, 50kg bag', barcode: '' },
-    { id: 'P005', name: 'Rice (50kg)', sku: 'RC-50K', category: 'Food Staples', unit: 'Bag',
-      costPrice: 62000, sellingPrice: 70000, stock: { wh1: 3, wh2: 2 }, reorderLevel: 10,
-      supplierId: 'S003', description: 'Long grain parboiled rice, 50kg', barcode: '' },
-  ],
-  customers: [
-    { id: 'C001', name: 'Mama Ngozi Supermart', phone: '0801 234 5678', email: 'ngozi@mart.ng',
-      address: 'Aba Market, Abia', creditLimit: 500000, balance: 120000, totalPurchases: 850000,
-      loyaltyPoints: 850, customerType: 'wholesale', notes: '' },
-    { id: 'C002', name: 'Chukwudi Stores', phone: '0802 345 6789', email: '',
-      address: 'Port Harcourt', creditLimit: 300000, balance: 45000, totalPurchases: 420000,
-      loyaltyPoints: 420, customerType: 'retail', notes: '' },
-    { id: 'C003', name: 'Adaeze Wholesale', phone: '0803 456 7890', email: 'adaeze@whole.ng',
-      address: 'Umuahia', creditLimit: 200000, balance: 0, totalPurchases: 210000,
-      loyaltyPoints: 210, customerType: 'wholesale', notes: '' },
-  ],
-  suppliers: [
-    { id: 'S001', name: 'PrimOil Industries Ltd', contact: 'Femi Adewale', phone: '0701 000 1111',
-      email: 'femi@primoil.ng', address: 'Lagos', category: 'Edible Oils', balance: 0, rating: 5 },
-    { id: 'S002', name: 'Agro Staples Co.', contact: 'Bello Musa', phone: '0702 000 2222',
-      email: 'bello@agrostaples.ng', address: 'Kano', category: 'Food Staples', balance: 85000, rating: 4 },
-    { id: 'S003', name: 'Rice Kingdom Ltd', contact: 'Ade Johnson', phone: '0703 000 3333',
-      email: '', address: 'Enugu', category: 'Food Staples', balance: 0, rating: 4 },
-  ],
-  salesReps: [
-    { id: 'R001', name: 'Emeka Obi', phone: '0811 111 1111', email: '', warehouseId: 'wh1',
-      commission: 2, totalSales: 350000 },
-    { id: 'R002', name: 'Chioma Eze', phone: '0812 222 2222', email: '', warehouseId: 'wh2',
-      commission: 2, totalSales: 180000 },
-  ],
+  products: [],
+  warehouses: [],
+  customers: [],
+  suppliers: [],
+  salesReps: [],
+  bulkDiscountTiers: [],
   sales: [],
   invoices: [],
   purchases: [],
@@ -2798,8 +2751,6 @@ document.addEventListener('DOMContentLoaded',()=>{
         { href:'#rep-activity', text:'📊 Rep Activity', after:'#sales-reps' },
    ================================================================ */
 
-'use strict';
-
 /* ════════════════════════════════════════════════════════════════
    A.  ACTIVITY LOGGING — Called automatically on every sale action
    ════════════════════════════════════════════════════════════════ */
@@ -3681,27 +3632,3 @@ document.addEventListener('DOMContentLoaded', () => {
 if (document.readyState !== 'loading') {
   if (!STATE.repActivityLog) STATE.repActivityLog = [];
   }
-  //login and store token
-  
- 
-  const API_BASE = 'https://cn-active-backend.onrender.com';
-
-async function login(email, password) {
-  const res = await fetch(`${API_BASE}/api/login`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ email, password })
-  });
-
-  const { token } = await res.json();
-  localStorage.setItem('token', token);
-}
-
-async function getProfile() {
-  const token = localStorage.getItem('token');
-  const res = await fetch(`${API_BASE}/api/profile`, {
-    headers: { Authorization: `Bearer ${token}` }
-  });
-  const data = await res.json();
-  console.log(data);
-}
