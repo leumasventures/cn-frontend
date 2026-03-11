@@ -486,17 +486,23 @@
 
 <div id="toast"></div>
 
+<script src="auth-guard.js"></script>
 <script>
 (() => {
   'use strict';
   const API = 'https://cn-active-backend-1.onrender.com';
 
-  const token = localStorage.getItem('cnjohnson_access_token');
-  const auth  = JSON.parse(localStorage.getItem('cnjohnson_auth') || 'null');
-  if (!token || !auth) { window.location.href = 'login.html'; return; }
+  // auth-guard.js has already verified the session and set window.CNJ
+  const auth = CNJ.user;
   document.getElementById('sidebarRole').textContent = auth.name || auth.role;
 
-  const headers = { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` };
+  // Use CNJ.fetch — it always sends the latest token and auto-refreshes on 401
+  const apiFetch = (url, opts = {}) => CNJ.fetch(url, opts);
+  // Legacy headers object kept for any direct fetch calls (bulk import, etc.)
+  const getHeaders = () => ({
+    'Content-Type': 'application/json',
+    'Authorization': `Bearer ${CNJ.token}`,
+  });
 
   let allProducts = [], categories = [], suppliers = [], editingId = null;
   let csvRows = []; // parsed CSV data
@@ -513,7 +519,7 @@
 
   async function loadProducts() {
     try {
-      const res  = await fetch(`${API}/api/products?limit=500`, { headers });
+      const res  = await apiFetch(`${API}/api/products?limit=500`);
       const data = await res.json();
       if (!res.ok) throw new Error(data.message);
       allProducts = data.products || [];
@@ -527,7 +533,7 @@
 
   async function loadCategories() {
     try {
-      const res  = await fetch(`${API}/api/products/categories`, { headers });
+      const res  = await apiFetch(`${API}/api/products/categories`);
       const data = await res.json();
       categories = data.categories || data.data || [];
     } catch (_) {}
@@ -536,7 +542,7 @@
 
   async function loadSuppliers() {
     try {
-      const res  = await fetch(`${API}/api/suppliers?limit=200`, { headers });
+      const res  = await apiFetch(`${API}/api/suppliers?limit=200`);
       const data = await res.json();
       suppliers = data.suppliers || data.data || [];
     } catch (_) {}
@@ -690,7 +696,7 @@
     try {
       const url    = editingId ? `${API}/api/products/${editingId}` : `${API}/api/products`;
       const method = editingId ? 'PUT' : 'POST';
-      const res    = await fetch(url, { method, headers, body: JSON.stringify(payload) });
+      const res    = await apiFetch(url, { method, body: JSON.stringify(payload) });
       const data   = await res.json();
       if (!res.ok) throw new Error(data.message);
       showToast(editingId ? '✓ Product updated' : '✓ Product added', 'success');
@@ -900,7 +906,7 @@
           lowStockThreshold: row.lowStockThreshold || undefined,
           taxRate:   row.taxRate || undefined,
         };
-        const res  = await fetch(`${API}/api/products`, { method: 'POST', headers, body: JSON.stringify(payload) });
+        const res  = await apiFetch(`${API}/api/products`, { method: 'POST', body: JSON.stringify(payload) });
         const data = await res.json();
         if (!res.ok) throw new Error(data.message);
         success++;
@@ -933,7 +939,7 @@
     const qty = parseInt(val);
     if (isNaN(qty) || qty < 0) return showToast('Invalid quantity', 'error');
     try {
-      const res  = await fetch(`${API}/api/products/${id}/stock`, { method: 'PATCH', headers, body: JSON.stringify({ quantity: qty }) });
+      const res  = await apiFetch(`${API}/api/products/${id}/stock`, { method: 'PATCH', body: JSON.stringify({ quantity: qty }) });
       const data = await res.json();
       if (!res.ok) throw new Error(data.message);
       showToast(`✓ Stock updated to ${qty}`, 'success');
@@ -944,7 +950,7 @@
   window.deleteProduct = async (id, name) => {
     if (!confirm(`Delete "${name}"? This cannot be undone.`)) return;
     try {
-      const res  = await fetch(`${API}/api/products/${id}`, { method: 'DELETE', headers });
+      const res  = await apiFetch(`${API}/api/products/${id}`, { method: 'DELETE' });
       const data = await res.json();
       if (!res.ok) throw new Error(data.message);
       showToast('Product deleted', 'success');

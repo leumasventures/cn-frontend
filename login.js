@@ -2,9 +2,8 @@
 (() => {
 'use strict';
 
-const API_URL = 'https://cn-active-backend-1.onrender.com'; // replace this
+const API_URL = 'https://cn-active-backend-1.onrender.com';
 
-/* ─── DOM References ─────────────────────────────────────────────────────── */
 const emailInput = document.querySelector('input[type="email"], input#email, input[placeholder*="mail" i]');
 const passInput  = document.querySelector('input[type="password"]');
 const roleBtns   = document.querySelectorAll('.role-btn, [data-role]');
@@ -13,7 +12,6 @@ const signInBtn  = Array.from(document.querySelectorAll('button, input[type="sub
 const signUpLink = Array.from(document.querySelectorAll('button, a'))
                      .find(el => /sign\s*up/i.test(el.textContent || el.value));
 
-/* ─── Inject inline error banner ────────────────────────────────────────── */
 const errorBox = (() => {
   const el = document.createElement('div');
   el.id = 'cnj-error';
@@ -29,7 +27,6 @@ const errorBox = (() => {
   return el;
 })();
 
-/* ─── Helpers ────────────────────────────────────────────────────────────── */
 const isValidEmail = e => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e);
 
 function showError(msg) {
@@ -37,12 +34,7 @@ function showError(msg) {
   errorBox.style.display = 'block';
   errorBox.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 }
-
-function clearError() {
-  errorBox.textContent = '';
-  errorBox.style.display = 'none';
-}
-
+function clearError() { errorBox.textContent = ''; errorBox.style.display = 'none'; }
 function setLoading(on) {
   if (!signInBtn) return;
   signInBtn.disabled    = on;
@@ -50,9 +42,7 @@ function setLoading(on) {
   signInBtn.setAttribute('aria-busy', String(on));
 }
 
-/* ─── Role Selector ──────────────────────────────────────────────────────── */
 let selectedRole = '';
-
 roleBtns.forEach((btn, i) => {
   if (!btn.dataset.role) {
     btn.dataset.role = btn.textContent.trim().toLowerCase().replace(/\s+/g, '_');
@@ -71,15 +61,12 @@ roleBtns.forEach((btn, i) => {
   });
 });
 
-/* ─── Enter key submits ──────────────────────────────────────────────────── */
 [emailInput, passInput].forEach(input => {
   input?.addEventListener('keydown', e => { if (e.key === 'Enter') signInBtn?.click(); });
 });
 
-/* ─── Sign In ────────────────────────────────────────────────────────────── */
 signInBtn?.addEventListener('click', async () => {
   clearError();
-
   const email    = emailInput?.value.trim() ?? '';
   const password = passInput?.value.trim()  ?? '';
 
@@ -88,7 +75,6 @@ signInBtn?.addEventListener('click', async () => {
   if (password.length < 6)  { showError('Password must be at least 6 characters.'); passInput?.focus(); return; }
 
   setLoading(true);
-
   try {
     const res  = await fetch(`${API_URL}/api/auth/login`, {
       method:  'POST',
@@ -99,11 +85,14 @@ signInBtn?.addEventListener('click', async () => {
 
     if (!res.ok) { showError(data.message || `Login failed (${res.status}). Please try again.`); return; }
 
-    localStorage.setItem('cnjohnson_access_token', data.accessToken);
-    localStorage.setItem('cnjohnson_auth', JSON.stringify(data.user));
-    if (data.expiresIn) {
-      localStorage.setItem('cnjohnson_token_expiry', Date.now() + data.expiresIn * 1000);
+    // ── Consistent keys: must match auth-guard.js and api-sync.js ──
+    localStorage.setItem('cnj_access_token',  data.accessToken);
+    localStorage.setItem('cnjohnson_auth',     JSON.stringify(data.user));
+    if (data.refreshToken) {
+      localStorage.setItem('cnj_refresh_token', data.refreshToken);
     }
+    const expiryMs = data.expiresIn ? data.expiresIn * 1000 : 60 * 60 * 1000; // 1hr default
+    localStorage.setItem('cnjohnson_token_expiry', Date.now() + expiryMs);
 
     window.location.href = 'dashboard.html';
 
@@ -117,10 +106,9 @@ signInBtn?.addEventListener('click', async () => {
   }
 });
 
-/* ─── Sign Up button → navigate to signup page ───────────────────────────── */
 signUpLink?.addEventListener('click', e => {
   e.preventDefault();
   window.location.href = 'signup.html';
 });
 
-})(); // end IIFE
+})();

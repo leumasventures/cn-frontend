@@ -199,9 +199,12 @@
 
         if (!res.ok) { showError(data.message || 'Login failed. Please try again.'); return; }
 
-        localStorage.setItem('cnjohnson_access_token', data.accessToken);
+        localStorage.setItem('cnj_access_token', data.accessToken);
         localStorage.setItem('cnjohnson_auth', JSON.stringify(data.user));
-        if (data.expiresIn) localStorage.setItem('cnjohnson_token_expiry', Date.now() + data.expiresIn * 1000);
+        if (data.refreshToken) localStorage.setItem('cnj_refresh_token', data.refreshToken);
+        // Store expiry — default to 15 minutes if backend doesn't send expiresIn
+        const expiryMs = data.expiresIn ? data.expiresIn * 1000 : 60 * 60 * 1000;
+        localStorage.setItem('cnjohnson_token_expiry', Date.now() + expiryMs);
 
         showSuccess('Welcome back! Redirecting…');
 

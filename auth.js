@@ -1,70 +1,161 @@
-// auth.js — place in cn-frontend/, include in every protected page
-// Usage: <script src="auth.js"></script> at top of <body>
-// Redirects unauthenticated users to login.html
-// Redirects cashiers away from non-POS pages
-
+/**
+ * auth-guard.js — C.N. Johnson Ventures
+ * Include on every protected page BEFORE any inline scripts.
+ * DO NOT also include auth.js — this file replaces it entirely.
+ *
+ * Provides:
+ *  - CNJ.token        — current access token (always fresh)
+ *  - CNJ.fetch(url, opts) — drop-in fetch wrapper that auto-refreshes on 401
+ *  - CNJ.logout()     — clears auth and redirects
+ */
 (() => {
   'use strict';
 
-  const ROLE_HOME = {
-    ADMIN:   'dashboard.html',
-    MANAGER: 'dashboard.html',
-    CASHIER: 'pos.html',       // cashier lands on POS only
+  const API_BASE     = 'https://cn-active-backend-1.onrender.com';
+  const PUBLIC_PAGES = ['login.html', 'signup.html', 'pending.html', 'index.html', ''];
+  const currentPage  = window.location.pathname.split('/').pop();
+
+  if (PUBLIC_PAGES.includes(currentPage)) return;
+
+  /* ── Storage keys — must match api-sync.js exactly ── */
+  const K = {
+    token:   'cnj_access_token',       // ← fixed (was cnjohnson_access_token)
+    refresh: 'cnj_refresh_token',      // ← fixed (was cnjohnson_refresh_token)
+    auth:    'cnjohnson_auth',
+    expiry:  'cnjohnson_token_expiry',
   };
 
-  // Pages that don't require auth
-  const PUBLIC_PAGES = ['login.html', 'signup.html', 'pending.html', 'index.html', ''];
+  function getToken()   { return localStorage.getItem(K.token); }
+  function getRefresh() { return localStorage.getItem(K.refresh); }
+  function getAuth()    { try { return JSON.parse(localStorage.getItem(K.auth)); } catch { return null; } }
 
-  const currentPage = window.location.pathname.split('/').pop();
+  function setTokens(access, refresh, expiresIn) {
+    localStorage.setItem(K.token, access);
+    if (refresh) localStorage.setItem(K.refresh, refresh);
+    const ms = expiresIn ? expiresIn * 1000 : 60 * 60 * 1000; // default 1 hour
+    localStorage.setItem(K.expiry, Date.now() + ms);
+  }
 
-  // Skip guard on public pages
-  if (PUBLIC_PAGES.some(p => currentPage === p || currentPage === '')) return;
+  function clearAuth() {
+    // Only remove auth keys — never wipe all of localStorage (would destroy app state)
+    [K.token, K.refresh, K.auth, K.expiry].forEach(k => localStorage.removeItem(k));
+  }
 
-  const token = localStorage.getItem('cnjohnson_access_token');
-  const auth  = JSON.parse(localStorage.getItem('cnjohnson_auth') || 'null');
+  /* ── Token refresh ── */
+  let _refreshPromise = null;
 
-  // Not logged in → back to login
+  async function refreshToken() {
+    if (_refreshPromise) return _refreshPromise;
+    const refreshTok = getRefresh();
+    if (!refreshTok) return null;
+
+    _refreshPromise = (async () => {
+      try {
+        const res = await fetch(`${API_BASE}/api/auth/refresh`, {
+          method:  'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body:    JSON.stringify({ refreshToken: refreshTok }),
+        });
+        if (!res.ok) return null;
+        const data = await res.json();
+        if (data.accessToken) {
+          setTokens(data.accessToken, data.refreshToken || refreshTok, data.expiresIn);
+          return data.accessToken;
+        }
+      } catch (e) {
+        console.warn('[CNJ] Token refresh failed:', e.message);
+      }
+      return null;
+    })();
+
+    const result = await _refreshPromise;
+    _refreshPromise = null;
+    return result;
+  }
+
+  /* ── Guard: check auth on page load ── */
+  const token = getToken();
+  const auth  = getAuth();
+
   if (!token || !auth) {
-    window.location.href = 'login.html';
+    window.location.replace('login.html');
     return;
   }
 
-  // Token expiry check
-  const expiry = localStorage.getItem('cnjohnson_token_expiry');
-  if (expiry && Date.now() > Number(expiry)) {
-    localStorage.clear();
-    window.location.href = 'login.html';
-    return;
+  /* Check expiry — try refresh before kicking out */
+  const expiry = Number(localStorage.getItem(K.expiry) || 0);
+  if (expiry && Date.now() > expiry) {
+    refreshToken().then(newToken => {
+      if (!newToken) {
+        clearAuth();
+        window.location.replace('login.html');
+      }
+    });
   }
 
-  const role = auth.role; // 'ADMIN' | 'MANAGER' | 'CASHIER'
-
-  // Cashier can ONLY access pos.html
+  /* ── Role guards ── */
+  const role = auth.role;
   if (role === 'CASHIER' && currentPage !== 'pos.html') {
-    window.location.href = 'pos.html';
+    window.location.replace('pos.html');
+    return;
+  }
+  const ADMIN_ONLY = ['admin.html', 'admin-users.html', 'users.html'];
+  if (role === 'MANAGER' && ADMIN_ONLY.includes(currentPage)) {
+    window.location.replace('dashboard.html');
     return;
   }
 
-  // Manager cannot access admin pages
-  const ADMIN_ONLY_PAGES = ['admin.html', 'users.html'];
-  if (role === 'MANAGER' && ADMIN_ONLY_PAGES.includes(currentPage)) {
-    window.location.href = 'dashboard.html';
-    return;
-  }
-
-  // Expose auth info globally for pages that need it
+  /* ── CNJ global ── */
   window.CNJ = {
-    user: auth,
+    user:      auth,
     role,
-    token,
+    get token() { return getToken(); },
+
     isAdmin:   role === 'ADMIN',
     isManager: role === 'MANAGER',
     isCashier: role === 'CASHIER',
+
+    async fetch(url, opts = {}) {
+      const makeReq = (tok) => fetch(url, {
+        ...opts,
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${tok}`,
+          ...(opts.headers || {}),
+        },
+      });
+
+      let res = await makeReq(getToken());
+
+      if (res.status === 401) {
+        const newToken = await refreshToken();
+        if (newToken) {
+          res = await makeReq(newToken);
+        } else {
+          const method = (opts.method || 'GET').toUpperCase();
+          if (method === 'GET') {
+            clearAuth();
+            window.location.replace('login.html');
+            return res;
+          }
+        }
+      }
+      return res;
+    },
+
     logout() {
-      localStorage.removeItem('cnjohnson_access_token');
-      localStorage.removeItem('cnjohnson_auth');
-      localStorage.removeItem('cnjohnson_token_expiry');
-      window.location.href = 'login.html';
+      clearAuth();
+      window.location.replace('login.html');
     },
   };
+
+  /* Silently refresh token 1 minute before expiry */
+  const msUntilExpiry = expiry ? expiry - Date.now() : 0;
+  const refreshIn     = Math.max(msUntilExpiry - 60_000, 0);
+  if (refreshIn < 14 * 60 * 1000) {
+    setTimeout(() => {
+      refreshToken().catch(() => {});
+    }, refreshIn);
+  }
+
 })();
