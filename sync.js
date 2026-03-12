@@ -27,11 +27,12 @@ window.SYNC = {
   async pullAll() {
     if (!window.API) return;
     try {
-      const [products, customers, suppliers, settings] = await Promise.allSettled([
+      const [products, customers, suppliers, settings, salesRes] = await Promise.allSettled([
         window.API.getProducts(),
         window.API.getCustomers(),
         window.API.getSuppliers(),
         window.API.getSettings(),
+        window.API.getSales ? window.API.getSales() : Promise.resolve(null),
       ]);
 
       if (products.status === 'fulfilled' && products.value?.products) {
@@ -105,6 +106,38 @@ window.SYNC = {
           loyaltyRedemptionRate: s.loyaltyRedemptionRate ?? STATE.settings.loyaltyRedemptionRate,
         });
         console.log('✅ Synced settings');
+      }
+
+      if (salesRes?.status === 'fulfilled' && salesRes.value?.sales) {
+        STATE.sales = salesRes.value.sales.map(s => ({
+          id:            s.id,
+          receiptNo:     s.receiptNo,
+          invoiceNo:     s.receiptNo,
+          customerId:    s.customerId || '',
+          customerName:  s.customer?.name || 'Walk-in',
+          repId:         s.salesRepId || '',
+          repName:       s.salesRepName || '',
+          items:         (s.items || []).map(i => ({
+            productId:   i.productId,
+            productName: i.product?.name || '',
+            qty:         i.qty,
+            unitPrice:   i.price,
+            effectiveDiscountPct: i.discount || 0,
+            lineDiscount: i.discount ? (i.qty * i.price * i.discount / 100) : 0,
+            total:        i.total,
+          })),
+          subtotal:      s.subtotal,
+          taxAmt:        s.tax,
+          total:         s.total,
+          extraDiscAmt:  s.discount,
+          paymentMethod: s.paymentMethod?.toLowerCase() || 'cash',
+          paymentStatus: s.paymentMethod === 'CREDIT' ? 'unpaid' : 'paid',
+          redeemPts:     s.pointsRedeemed || 0,
+          notes:         s.note || '',
+          date:          s.createdAt,
+          _apiId:        s.id,
+        }));
+        console.log(`✅ Synced ${STATE.sales.length} sales`);
       }
 
       saveState();

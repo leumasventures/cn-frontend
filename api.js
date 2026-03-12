@@ -183,6 +183,7 @@ window.API = {
 
   // Sales
   completeSale: (data) => request('POST', '/api/sales', data),
+  getSales:     (params) => request('GET', `/api/sales${params ? '?' + new URLSearchParams(params) : ''}`),
 
   // Settings
   getSettings:    ()     => request('GET', '/api/settings'),
