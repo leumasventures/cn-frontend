@@ -122,18 +122,24 @@ window.SYNC = {
     if (!window.API) return;
     try {
       const payload = {
-        customerId:    sale.customerId || null,
-        items:         sale.items.map(i => ({
+        customerId:     sale.customerId || null,
+        items:          sale.items.map(i => ({
           productId: i.productId,
           qty:       i.qty,
           price:     i.unitPrice,
           discount:  i.effectiveDiscountPct || 0,
+          total:     parseFloat(((i.qty * i.unitPrice) * (1 - (i.effectiveDiscountPct || 0) / 100)).toFixed(2)),
         })),
-        paymentMethod: (sale.paymentMethod || 'cash').toUpperCase(),
-        discount:      sale.extraDiscPct || 0,
-        taxRate:       STATE.settings.taxRate,
-        note:          sale.notes || '',
-        redeemPoints:  sale.redeemPts || 0,
+        paymentMethod:  (sale.paymentMethod || 'cash').toUpperCase(),
+        subtotal:       parseFloat((sale.subtotal || 0).toFixed(2)),
+        discount:       parseFloat((sale.extraDiscAmt || 0).toFixed(2)),
+        tax:            parseFloat((sale.taxAmt || 0).toFixed(2)),
+        total:          parseFloat((sale.total || 0).toFixed(2)),
+        pointsRedeemed: sale.redeemPts || 0,
+        note:           sale.notes || '',
+        salesRepId:     sale.repId   || null,
+        salesRepName:   sale.repName || null,
+        origin:         sale.origin  || null,
       };
       const res = await window.API.completeSale(payload);
       console.log('✅ Sale pushed to API:', res?.sale?.receiptNo);
