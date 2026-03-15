@@ -191,7 +191,7 @@
   // ── Warehouse logic ───────────────────────────────────────────
   let data = [], editId = null;
 
-  async function load() {
+  window.load = async function() {
     const r = await fetch(API + "/api/warehouses", getH());
     const d = await r.json();
     data = d.warehouses || d.data || d || [];
@@ -201,7 +201,7 @@
     render();
   }
 
-  function render() {
+  window.render = function() {
     const q = document.getElementById("srch").value.toLowerCase();
     const rows = data.filter(x => x.name.toLowerCase().includes(q) || (x.location || "").toLowerCase().includes(q));
     const tb = document.getElementById("tbody");
@@ -217,11 +217,11 @@
       </div></td></tr>`).join("");
   }
 
-  function openModal() { editId = null; document.getElementById("mTitle").textContent = "Add Warehouse"; ["fName", "fLocation", "fDesc"].forEach(id => document.getElementById(id).value = ""); document.getElementById("modal").classList.add("open"); }
-  function edit(id) { editId = id; const x = data.find(w => w.id === id); document.getElementById("mTitle").textContent = "Edit Warehouse"; document.getElementById("fName").value = x.name || ""; document.getElementById("fLocation").value = x.location || ""; document.getElementById("fDesc").value = x.description || ""; document.getElementById("modal").classList.add("open"); }
-  function closeModal() { document.getElementById("modal").classList.remove("open"); }
+  window.openModal = function() { editId = null; document.getElementById("mTitle").textContent = "Add Warehouse"; ["fName", "fLocation", "fDesc"].forEach(id => document.getElementById(id).value = ""); document.getElementById("modal").classList.add("open"); }
+  window.edit = function(id) { editId = id; const x = data.find(w => w.id === id); document.getElementById("mTitle").textContent = "Edit Warehouse"; document.getElementById("fName").value = x.name || ""; document.getElementById("fLocation").value = x.location || ""; document.getElementById("fDesc").value = x.description || ""; document.getElementById("modal").classList.add("open"); }
+  window.closeModal = function() { document.getElementById("modal").classList.remove("open"); }
 
-  async function save() {
+  window.save = async function() {
     const name = document.getElementById("fName").value.trim();
     if (!name) { toast("Name required", "error"); return; }
     const body = { name, location: document.getElementById("fLocation").value.trim(), description: document.getElementById("fDesc").value.trim() };
@@ -232,7 +232,7 @@
     toast(editId ? "Updated" : "Added"); closeModal(); load();
   }
 
-  async function del(id, name) {
+  window.del = async function(id, name) {
     if (!confirm("Delete " + name + "?")) return;
     const r = await fetch(`${API}/api/warehouses/${id}`, getH({ method: "DELETE" }));
     if (r.ok) { toast("Deleted"); load(); } else toast("Error", "error");
