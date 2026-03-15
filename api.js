@@ -182,8 +182,40 @@ window.API = {
   deleteSupplier: (id)       => request('DELETE', `/api/suppliers/${id}`),
 
   // Sales
-  completeSale: (data) => request('POST', '/api/sales', data),
-  getSales:     (params) => request('GET', `/api/sales${params ? '?' + new URLSearchParams(params) : ''}`),
+  completeSale:  (data)   => request('POST', '/api/sales', data),
+  getSales:      (params) => request('GET', `/api/sales${params ? '?' + new URLSearchParams(params) : ''}`),
+
+  // Expenses
+  getExpenses:    ()         => request('GET',    '/api/expenses'),
+  createExpense:  (data)     => request('POST',   '/api/expenses',       data),
+  updateExpense:  (id, data) => request('PUT',    `/api/expenses/${id}`,  data),
+  deleteExpense:  (id)       => request('DELETE', `/api/expenses/${id}`),
+
+  // Purchases
+  getPurchases:   ()         => request('GET',    '/api/purchases'),
+  createPurchase: (data)     => request('POST',   '/api/purchases',       data),
+  deletePurchase: (id)       => request('DELETE', `/api/purchases/${id}`),
+
+  // Quotes
+  getQuotes:      ()         => request('GET',    '/api/quotes'),
+  createQuote:    (data)     => request('POST',   '/api/quotes',          data),
+  updateQuoteStatus: (id, data) => request('PATCH', `/api/quotes/${id}/status`, data),
+  deleteQuote:    (id)       => request('DELETE', `/api/quotes/${id}`),
+
+  // Credit Notes
+  getCreditNotes:  ()        => request('GET',    '/api/credit-notes'),
+  createCreditNote: (data)   => request('POST',   '/api/credit-notes',    data),
+  deleteCreditNote: (id)     => request('DELETE', `/api/credit-notes/${id}`),
+
+  // Stock Transfers
+  getStockTransfers:  ()     => request('GET',    '/api/stock-transfers'),
+  createStockTransfer: (data) => request('POST',  '/api/stock-transfers', data),
+
+  // Warehouses
+  getWarehouses:   ()        => request('GET',    '/api/warehouses'),
+  createWarehouse: (data)    => request('POST',   '/api/warehouses',      data),
+  updateWarehouse: (id, data) => request('PUT',   `/api/warehouses/${id}`, data),
+  deleteWarehouse: (id)      => request('DELETE', `/api/warehouses/${id}`),
 
   // Settings
   getSettings:    ()     => request('GET', '/api/settings'),
@@ -191,118 +223,10 @@ window.API = {
 };
 
 /* ════════════════════════════════════════════════════════════════
-   STATE SYNC — patches script.js saveState() / loadState()
-   ════════════════════════════════════════════════════════════════ */
-let _saveTimer = null;
-
-window._syncSaveState = async function (state) {
-  try {
-    const res = await apiFetch('/api/state', {
-      method: 'PUT',
-      body: JSON.stringify({ state }),
-      _isSave: true,
-    });
-    if (!res || !res.ok) {
-      localStorage.setItem('cnjohnson_db_v1', JSON.stringify(state));
-      console.warn('[Sync] Backend save failed, stored locally as fallback');
-      window._showSyncStatus?.('Saved locally', '#f59e0b');
-    } else {
-      window._showSyncStatus?.('Synced ✓', '#22c55e');
-    }
-  } catch (err) {
-    localStorage.setItem('cnjohnson_db_v1', JSON.stringify(state));
-    console.warn('[Sync] Network error, stored locally:', err.message);
-    window._showSyncStatus?.('Saved locally', '#f59e0b');
-  }
-};
-
-window._syncLoadState = async function () {
-  try {
-    const res = await apiFetch('/api/state');
-    if (res && res.ok) {
-      const data = await res.json();
-      if (data?.state) return data.state;
-    }
-  } catch (err) {
-    console.warn('[Sync] Could not load from backend:', err.message);
-  }
-  try {
-    const raw = localStorage.getItem('cnjohnson_db_v1');
-    if (raw) return JSON.parse(raw);
-  } catch { }
-  return null;
-};
-
-/* ════════════════════════════════════════════════════════════════
-   CLEAN DEFAULT STATE
-   ════════════════════════════════════════════════════════════════ */
-window._cleanDefaultState = function () {
-  return {
-    settings: {
-      companyName: 'C.N. Johnson Ventures Limited',
-      address: 'Aba, Abia State, Nigeria',
-      phone: '+234 803 000 0000',
-      email: 'info@cnjohnson.com',
-      currency: '₦',
-      taxRate: 7.5,
-      lowStockThreshold: 10,
-      invoicePrefix: 'INV',
-      receiptPrefix: 'RCP',
-      quotePrefix: 'QTE',
-      debitNotePrefix: 'DN',
-      creditNotePrefix: 'CN',
-      nextInvoiceNo: 1001,
-      nextReceiptNo: 5001,
-      nextQuoteNo: 2001,
-      nextDebitNoteNo: 3001,
-      nextCreditNoteNo: 4001,
-      enableBulkDiscount: true,
-      loyaltyPointsRate: 1,
-      loyaltyRedemptionRate: 100,
-      repDailyTarget: 200000,
-    },
-    bulkDiscountTiers:   [],
-    warehouses:          [],
-    products:            [],
-    customers:           [],
-    suppliers:           [],
-    salesReps:           [],
-    sales:               [],
-    invoices:            [],
-    purchases:           [],
-    expenses:            [],
-    stockTransfers:      [],
-    quotes:              [],
-    debitNotes:          [],
-    creditNotes:         [],
-    loyaltyTransactions: [],
-    priceHistory:        [],
-    repActivityLog:      [],
-  };
-};
-
-/* ════════════════════════════════════════════════════════════════
-   PATCH script.js FUNCTIONS  (runs after all scripts load)
+   SYNC STATUS INDICATOR
+   (data loading/saving is handled by sync.js)
    ════════════════════════════════════════════════════════════════ */
 window.addEventListener('load', () => {
-
-  if (typeof defaultState === 'function') {
-    window.defaultState = window._cleanDefaultState;
-  }
-
-  if (typeof saveState === 'function') {
-    window.saveState = function () {
-      try {
-        localStorage.setItem('cnjohnson_db_v1', JSON.stringify(STATE));
-      } catch (e) {
-        console.warn('localStorage save failed', e);
-      }
-      clearTimeout(_saveTimer);
-      _saveTimer = setTimeout(() => window._syncSaveState(STATE), 300);
-    };
-  }
-
-  /* Sync status indicator */
   const indicator = document.createElement('div');
   indicator.id = 'sync-indicator';
   indicator.style.cssText = `
@@ -321,5 +245,4 @@ window.addEventListener('load', () => {
     clearTimeout(window._syncHideTimer);
     window._syncHideTimer = setTimeout(() => { indicator.style.opacity = '0'; }, 2500);
   };
-
 });

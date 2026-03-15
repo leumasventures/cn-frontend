@@ -104,6 +104,7 @@
     @keyframes spin{to{transform:rotate(360deg)}}
     @media(max-width:900px){.layout{grid-template-columns:1fr}.sidebar{display:none}.main{padding:20px 14px}}
   </style>
+<script src="auth.js"></script>
 </head>
 <body><div class="layout">
 <aside class="sidebar">
@@ -162,63 +163,83 @@
     </div>
   </div>
 </div>
-<script>
-let data=[],editId=null;
-async function load(){
-  const r=await fetch(API+"/api/warehouses",H);const d=await r.json();
-  data=d.warehouses||d.data||d||[];
-  document.getElementById("stTotal").textContent=data.length;
-  document.getElementById("stProds").textContent=data.reduce((s,x)=>s+(x.products?.length||0),0);
-  document.getElementById("stUnits").textContent=data.reduce((s,x)=>s+(x.products?.reduce((a,p)=>a+(p.stock||0),0)||0),0);
-  render();
-}
-function render(){
-  const q=document.getElementById("srch").value.toLowerCase();
-  const rows=data.filter(x=>x.name.toLowerCase().includes(q)||(x.location||"").toLowerCase().includes(q));
-  const tb=document.getElementById("tbody");
-  if(!rows.length){tb.innerHTML='<tr><td colspan="5"><div class="empty-state"><p>No warehouses found</p></div></td></tr>';return;}
-  tb.innerHTML=rows.map(x=>`<tr>
-    <td><strong>${esc(x.name)}</strong></td>
-    <td style="color:var(--muted)">${esc(x.location||"—")}</td>
-    <td style="color:var(--muted);font-size:12px">${esc(x.description||"—")}</td>
-    <td><span class="badge badge-muted">${x.products?.length||0} products</span></td>
-    <td><div style="display:flex;gap:6px">
-      <button class="btn btn-secondary btn-sm" onclick="edit('${x.id}')">Edit</button>
-      <button class="btn btn-danger btn-sm" onclick="del('${x.id}','${esc(x.name)}')">Delete</button>
-    </div></td></tr>`).join("");
-}
-function openModal(){editId=null;document.getElementById("mTitle").textContent="Add Warehouse";["fName","fLocation","fDesc"].forEach(id=>document.getElementById(id).value="");document.getElementById("modal").classList.add("open");}
-function edit(id){editId=id;const x=data.find(w=>w.id===id);document.getElementById("mTitle").textContent="Edit Warehouse";document.getElementById("fName").value=x.name||"";document.getElementById("fLocation").value=x.location||"";document.getElementById("fDesc").value=x.description||"";document.getElementById("modal").classList.add("open");}
-function closeModal(){document.getElementById("modal").classList.remove("open");}
-async function save(){
-  const name=document.getElementById("fName").value.trim();
-  if(!name){toast("Name required","error");return;}
-  const body={name,location:document.getElementById("fLocation").value.trim(),description:document.getElementById("fDesc").value.trim()};
-  const r=await fetch(editId?`${API}/api/warehouses/${editId}`:API+"/api/warehouses",{...H,method:editId?"PUT":"POST",body:JSON.stringify(body)});
-  const d=await r.json();if(!r.ok){toast(d.message||"Error","error");return;}
-  toast(editId?"Updated":"Added");closeModal();load();
-}
-async function del(id,name){
-  if(!confirm("Delete "+name+"?"))return;
-  const r=await fetch(`${API}/api/warehouses/${id}`,{...H,method:"DELETE"});
-  if(r.ok){toast("Deleted");load();}else toast("Error","error");
-}
-load();
-</script></main></div>
+
 <div id="toast"></div>
+
 <script>
-const _a=JSON.parse(localStorage.getItem("cnjohnson_auth")||"null");
-const _t=localStorage.getItem("cnjohnson_access_token");
-if(!_t||!_a){window.location.href="login.html";}
-if(document.getElementById("sidebarUser"))document.getElementById("sidebarUser").textContent=_a?.name||"User";
-if(_a?.role==="ADMIN"){const al=document.getElementById("adminLink");if(al)al.style.display="flex";}
-function CNJlogout(){localStorage.removeItem("cnjohnson_access_token");localStorage.removeItem("cnjohnson_auth");localStorage.removeItem("cnjohnson_token_expiry");window.location.href="login.html";}
-let _tt;
-function toast(msg,type="success"){const t=document.getElementById("toast");t.textContent=msg;t.className="show "+type;clearTimeout(_tt);_tt=setTimeout(()=>t.className=type,3200);}
-function fmt(n){return"₦"+Number(n||0).toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g,",");}
-function fmtDate(d){return d?new Date(d).toLocaleDateString("en-GB",{day:"numeric",month:"short",year:"numeric"}):"--";}
-function esc(s){return String(s||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");}
-const API="https://cn-active-backend-1.onrender.com";
-const H={headers:{Authorization:"Bearer "+_t,"Content-Type":"application/json"}};
+  // ── Auth & config ─────────────────────────────────────────────
+  const _a = JSON.parse(localStorage.getItem("cnjohnson_auth") || "null");
+  const _t = localStorage.getItem("cnjohnson_access_token");
+  if (!_t || !_a) { window.location.href = "login.html"; }
+  if (document.getElementById("sidebarUser")) document.getElementById("sidebarUser").textContent = _a?.name || "User";
+  if (_a?.role === "ADMIN") { const al = document.getElementById("adminLink"); if (al) al.style.display = "flex"; }
+
+  function CNJlogout() { localStorage.removeItem("cnjohnson_access_token"); localStorage.removeItem("cnjohnson_auth"); localStorage.removeItem("cnjohnson_token_expiry"); window.location.href = "login.html"; }
+  let _tt;
+  function toast(msg, type = "success") { const t = document.getElementById("toast"); t.textContent = msg; t.className = "show " + type; clearTimeout(_tt); _tt = setTimeout(() => t.className = type, 3200); }
+  function fmt(n) { return "₦" + Number(n || 0).toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ","); }
+  function fmtDate(d) { return d ? new Date(d).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" }) : "--"; }
+  function esc(s) { return String(s || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;"); }
+
+  const API = "https://cn-active-backend-1.onrender.com";
+  // Build fresh headers on every request so token is always current
+  function getH(extras = {}) {
+    const token = localStorage.getItem("cnjohnson_access_token") || localStorage.getItem("cnj_access_token") || "";
+    return { headers: { "Content-Type": "application/json", "Authorization": "Bearer " + token }, ...extras };
+  }
+
+  // ── Warehouse logic ───────────────────────────────────────────
+  let data = [], editId = null;
+
+  async function load() {
+    const r = await fetch(API + "/api/warehouses", getH());
+    const d = await r.json();
+    data = d.warehouses || d.data || d || [];
+    document.getElementById("stTotal").textContent = data.length;
+    document.getElementById("stProds").textContent = data.reduce((s, x) => s + (x.products?.length || 0), 0);
+    document.getElementById("stUnits").textContent = data.reduce((s, x) => s + (x.products?.reduce((a, p) => a + (p.stock || 0), 0) || 0), 0);
+    render();
+  }
+
+  function render() {
+    const q = document.getElementById("srch").value.toLowerCase();
+    const rows = data.filter(x => x.name.toLowerCase().includes(q) || (x.location || "").toLowerCase().includes(q));
+    const tb = document.getElementById("tbody");
+    if (!rows.length) { tb.innerHTML = '<tr><td colspan="5"><div class="empty-state"><p>No warehouses found</p></div></td></tr>'; return; }
+    tb.innerHTML = rows.map(x => `<tr>
+      <td><strong>${esc(x.name)}</strong></td>
+      <td style="color:var(--muted)">${esc(x.location || "—")}</td>
+      <td style="color:var(--muted);font-size:12px">${esc(x.description || "—")}</td>
+      <td><span class="badge badge-muted">${x.products?.length || 0} products</span></td>
+      <td><div style="display:flex;gap:6px">
+        <button class="btn btn-secondary btn-sm" onclick="edit('${x.id}')">Edit</button>
+        <button class="btn btn-danger btn-sm" onclick="del('${x.id}','${esc(x.name)}')">Delete</button>
+      </div></td></tr>`).join("");
+  }
+
+  function openModal() { editId = null; document.getElementById("mTitle").textContent = "Add Warehouse"; ["fName", "fLocation", "fDesc"].forEach(id => document.getElementById(id).value = ""); document.getElementById("modal").classList.add("open"); }
+  function edit(id) { editId = id; const x = data.find(w => w.id === id); document.getElementById("mTitle").textContent = "Edit Warehouse"; document.getElementById("fName").value = x.name || ""; document.getElementById("fLocation").value = x.location || ""; document.getElementById("fDesc").value = x.description || ""; document.getElementById("modal").classList.add("open"); }
+  function closeModal() { document.getElementById("modal").classList.remove("open"); }
+
+  async function save() {
+    const name = document.getElementById("fName").value.trim();
+    if (!name) { toast("Name required", "error"); return; }
+    const body = { name, location: document.getElementById("fLocation").value.trim(), description: document.getElementById("fDesc").value.trim() };
+    const url = editId ? `${API}/api/warehouses/${editId}` : `${API}/api/warehouses`;
+    const r = await fetch(url, getH({ method: editId ? "PUT" : "POST", body: JSON.stringify(body) }));
+    const d = await r.json();
+    if (!r.ok) { toast(d.message || "Error", "error"); return; }
+    toast(editId ? "Updated" : "Added"); closeModal(); load();
+  }
+
+  async function del(id, name) {
+    if (!confirm("Delete " + name + "?")) return;
+    const r = await fetch(`${API}/api/warehouses/${id}`, getH({ method: "DELETE" }));
+    if (r.ok) { toast("Deleted"); load(); } else toast("Error", "error");
+  }
+
+  load();
 </script>
-</body></html>
+</main></div>
+</body>
+</html>
