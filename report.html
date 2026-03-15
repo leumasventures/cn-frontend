@@ -169,6 +169,7 @@
   <div style="padding:14px 18px;border-bottom:1px solid var(--border);font-size:13px;font-weight:500">Daily Sales</div>
   <table><thead><tr><th>Date</th><th>Orders</th><th>Revenue</th><th>Discount</th><th>Tax</th></tr></thead><tbody id="dailyBody"></tbody></table>
 </div>
+
 <script>
 const today=new Date(),past=new Date();past.setDate(past.getDate()-30);
 document.getElementById("dateFrom").value=past.toISOString().split("T")[0];

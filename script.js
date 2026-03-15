@@ -3599,36 +3599,89 @@ function saveRepMonitorSettings() {
 /* ════════════════════════════════════════════════════════════════
    C.  WIRE INTO MAIN APP  (runs after DOMContentLoaded patches)
    ════════════════════════════════════════════════════════════════ */
-document.addEventListener('DOMContentLoaded', () => {
-  /* 1. Add section element if not already in DOM */
-  if (!document.getElementById('rep-activity')) {
-    const sec = document.createElement('section');
-    sec.id = 'rep-activity';
-    document.querySelector('main')?.append(sec);
-  }
+// ────────────────────────────────────────────────
+// Initialize app + sync + rep-activity section
+// ────────────────────────────────────────────────
+document.addEventListener('DOMContentLoaded', async () => {
+  // 1. Make sure core state properties exist and expose STATE globally
+  if (!STATE.repActivityLog) STATE.repActivityLog = [];
+  window.STATE = STATE;   // ← expose to sync.js BEFORE pullAll runs
 
-  /* 2. Add nav link after Sales Reps */
-  if (!document.querySelector('.sidebar a[href="#rep-activity"]')) {
-    const after = document.querySelector('.sidebar a[href="#sales-reps"]');
-    if (after) {
-      const a = document.createElement('a');
-      a.href      = '#rep-activity';
-      a.innerHTML = '📊 Rep Activity';
-      a.onclick   = () => showSection('rep-activity');
-      after.after(a);
+  // 2. Try to pull real data from backend (if sync module is loaded)
+  if (window.SYNC) {
+    try {
+      await window.SYNC.pullAll();     // ← loads warehouses, products, etc. from DB
+      console.log('Backend data pulled successfully');
+    } catch (err) {
+      console.error('Failed to pull data from backend:', err);
     }
+
+    // Optional: check connection / token validity
+    if (typeof window.SYNC.ping === 'function') {
+      window.SYNC.ping();
+    }
+  } else {
+    console.warn('SYNC module not found — running in localStorage-only mode');
   }
 
-  /* 3. Register with the showSection router */
-  const _origShow = window.showSection;
-  window.showSection = function (id) {
-    _origShow(id);
-    if (id === 'rep-activity') renderRepActivity();
-  };
+  // 3. Add rep-activity section if missing
+  if (!document.getElementById('rep-activity')) {
+    const section = document.createElement('section');
+    section.id = 'rep-activity';
+    document.querySelector('main')?.appendChild(section);
+  }
 
-  /* 4. Ensure repActivityLog array survives state loads */
-  if (!STATE.repActivityLog) STATE.repActivityLog = [];
-}, { once: false });   // DOMContentLoaded may have already fired, so also run inline:
+  // 4. Add sidebar navigation link (after Sales Reps)
+  const salesRepLink = document.querySelector('.sidebar a[href="#sales-reps"]');
+  if (salesRepLink && !document.querySelector('.sidebar a[href="#rep-activity"]')) {
+    const repLink = document.createElement('a');
+    repLink.href = '#rep-activity';
+    repLink.innerHTML = '📊 Rep Activity';
+    repLink.onclick = () => showSection('rep-activity');
+    salesRepLink.after(repLink);
+  }
+
+  // 5. Extend / patch showSection to handle rep-activity
+  if (typeof window.showSection === 'function') {
+    const originalShowSection = window.showSection;
+    window.showSection = function (sectionId) {
+      originalShowSection(sectionId);
+
+      if (sectionId === 'rep-activity') {
+        if (typeof renderRepActivity === 'function') {
+          renderRepActivity();
+        } else {
+          console.warn('renderRepActivity() function not defined yet');
+        }
+      }
+    };
+  } else {
+    console.warn('showSection() not found — navigation patching skipped');
+  }
+
+  // 6. Show default section
+  if (typeof showSection === 'function') {
+    showSection('dashboard');
+  }
+
+}, { once: true });
+
+// ────────────────────────────────────────────────
+// Fallback: run immediately if DOM already loaded
+// (important when this script is loaded defer/async or late)
+// ────────────────────────────────────────────────
 if (document.readyState !== 'loading') {
-  if (!STATE.repActivityLog) STATE.repActivityLog = [];
+  // Re-run the most critical parts (state + section creation)
+  if (!STATE.repActivityLog) {
+    STATE.repActivityLog = [];
   }
+
+  if (!document.getElementById('rep-activity')) {
+    const section = document.createElement('section');
+    section.id = 'rep-activity';
+    document.querySelector('main')?.appendChild(section);
+  }
+
+  // You can optionally call the full init logic again here,
+  // but usually just the above two are enough for fallback
+}
