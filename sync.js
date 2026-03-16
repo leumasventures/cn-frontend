@@ -283,7 +283,7 @@
     let serverData;
     try {
       const res = await window.API.fetchAll();
-      serverData = res?.data;
+      serverData = res?.data?.data || res?.data;
     } catch (err) {
       console.warn('[SYNC] Could not reach backend:', err.message);
       setStatus('offline');
