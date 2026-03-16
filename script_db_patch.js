@@ -8,14 +8,14 @@
    (or falls back to localStorage-only if offline).
    
    Nothing in the original script.js needs to change.
-   ================================================================ */
+================================================================ */
+
+// ── Flag so script.js dispatcher knows the patch is loaded ──────
+window._dbPatchLoaded = true;
 
 /* ════════════════════════════════════════════════════════════════
    WAREHOUSES
-   ════════════════════════════════════════════════════════════════ */
-/* ════════════════════════════════════════════════════════════════
-   WAREHOUSES
-   ════════════════════════════════════════════════════════════════ */
+════════════════════════════════════════════════════════════════ */
 window.openAddWarehouse = function () {
   modal('Add Warehouse', `
     <div class="form-grid">
@@ -39,11 +39,11 @@ window.openAddWarehouse = function () {
         () => window.API.createWarehouse(payload),
         (apiData) => {
           STATE.warehouses.push({
-            id:       apiData?.id   || 'wh' + uid(),
-            name:     apiData?.name || name,
+            id:       apiData?.id       || 'wh' + uid(),
+            name:     apiData?.name     || name,
             location: apiData?.location || location,
             manager:  apiData?.manager  || manager,
-            _apiId:   apiData?.id,
+            _apiId:   apiData?.id       || null,
           });
           saveState();
           close();
@@ -110,7 +110,7 @@ window.deleteWarehouse = async function (id) {
 
 /* ════════════════════════════════════════════════════════════════
    SALES REPS
-   ════════════════════════════════════════════════════════════════ */
+════════════════════════════════════════════════════════════════ */
 window.openAddRep = function () {
   modal('Add Sales Rep', repFormHTML(), async (overlay, close) => {
     const name = $('#rf-name', overlay).value.trim();
@@ -121,9 +121,9 @@ window.openAddRep = function () {
 
     const payload = {
       name,
-      phone:       $('#rf-phone',  overlay).value.trim() || null,
-      email:       $('#rf-email',  overlay).value.trim() || null,
-      warehouseId: wh?._apiId || null,   // ← send real DB id or null
+      phone:       $('#rf-phone', overlay).value.trim() || null,
+      email:       $('#rf-email', overlay).value.trim() || null,
+      warehouseId: wh?._apiId || null,
       commission:  parseFloat($('#rf-comm', overlay).value) || 2,
     };
 
@@ -132,14 +132,14 @@ window.openAddRep = function () {
       () => window.API.createSalesRep(payload),
       (apiData) => {
         STATE.salesReps.push({
-          id:          apiData?.id  || 'R' + uid(),
+          id:          apiData?.id || 'R' + uid(),
           name:        apiData?.name || name,
           phone:       payload.phone  || '',
           email:       payload.email  || '',
-          warehouseId: whLocalId,        // keep local id for UI lookups
+          warehouseId: whLocalId,
           commission:  payload.commission,
           totalSales:  0,
-          _apiId:      apiData?.id,
+          _apiId:      apiData?.id || null,
         });
         saveState();
         close();
@@ -163,7 +163,7 @@ window.editRep = function (id) {
       name:        $('#rf-name',  overlay).value.trim() || r.name,
       phone:       $('#rf-phone', overlay).value.trim() || null,
       email:       $('#rf-email', overlay).value.trim() || null,
-      warehouseId: wh?._apiId || null,   // ← send real DB id or null
+      warehouseId: wh?._apiId || null,
       commission:  parseFloat($('#rf-comm', overlay).value) || r.commission,
     };
 
@@ -174,8 +174,8 @@ window.editRep = function (id) {
       () => window.API.updateSalesRep(apiId, payload),
       () => {
         r.name        = payload.name;
-        r.phone       = payload.phone       || '';
-        r.email       = payload.email       || '';
+        r.phone       = payload.phone  || '';
+        r.email       = payload.email  || '';
         r.warehouseId = whLocalId;
         r.commission  = payload.commission;
         saveState();
@@ -204,10 +204,21 @@ window.deleteRep = async function (id) {
     { type: 'deleteSalesRep', id: apiId, data: {} }
   );
 };
+
 /* ════════════════════════════════════════════════════════════════
    PRODUCTS
-   ════════════════════════════════════════════════════════════════ */
-window.openAddProduct = function () {
+
+   The patched openAddProduct is stored under TWO names:
+     window._openAddProductPatched  ← the actual implementation
+     window.openAddProduct          ← same reference
+
+   script.js's openAddProduct() checks window._dbPatchLoaded and
+   calls window.openAddProduct() — which resolves to
+   window._openAddProductPatched. Since script.js calls
+   window.openAddProduct (the property), not the local function,
+   there is zero recursion.
+════════════════════════════════════════════════════════════════ */
+window._openAddProductPatched = async function () {
   modal('Add Product', productFormHTML(), async (overlay, close) => {
     const name = $('#pf-name', overlay).value.trim();
     const sku  = $('#pf-sku',  overlay).value.trim();
@@ -219,11 +230,7 @@ window.openAddProduct = function () {
       stock[wh.id] = parseInt($(`#ps-${wh.id}`, overlay).value) || 0;
     });
 
-    const warehouseStock = STATE.warehouses.map(wh => ({
-      warehouseId: wh._apiId || wh.id,
-      quantity:    stock[wh.id],
-    }));
-
+    const totalStock   = Object.values(stock).reduce((a, b) => a + b, 0);
     const sellingPrice = parseFloat($('#pf-sell',    overlay).value) || 0;
     const costPrice    = parseFloat($('#pf-cost',    overlay).value) || 0;
     const reorderLevel = parseInt($('#pf-reorder',   overlay).value) || 10;
@@ -235,13 +242,11 @@ window.openAddProduct = function () {
       category:          $('#pf-cat',     overlay).value.trim() || null,
       unit:              $('#pf-unit',    overlay).value.trim() || null,
       costPrice,
-      sellingPrice,
-      price:             sellingPrice,        // ← Prisma schema field name
-      lowStockThreshold: reorderLevel,        // ← Prisma schema field name
-      reorderLevel,
+      price:             sellingPrice,
+      lowStockThreshold: reorderLevel,
       supplierId:        $('#pf-sup',  overlay).value || null,
       description:       $('#pf-desc', overlay).value.trim() || null,
-      warehouseStock,
+      stock:             totalStock,
     };
 
     await dbSave(
@@ -249,19 +254,19 @@ window.openAddProduct = function () {
       () => window.API.createProduct(payload),
       (apiData) => {
         STATE.products.push({
-          id:           apiData?.id   || 'P' + uid(),
-          name:         apiData?.name || name,
-          sku:          apiData?.sku  || sku,
-          barcode:      payload.barcode      || '',
-          category:     payload.category     || '',
-          unit:         payload.unit         || '',
+          id:           apiData?.id    || 'P' + uid(),
+          name:         apiData?.name  || name,
+          sku:          apiData?.sku   || sku,
+          barcode:      payload.barcode     || '',
+          category:     payload.category    || '',
+          unit:         payload.unit        || '',
           costPrice,
           sellingPrice,
           reorderLevel,
-          supplierId:   payload.supplierId,
-          description:  payload.description  || '',
+          supplierId:   payload.supplierId  || '',
+          description:  payload.description || '',
           stock,
-          _apiId: apiData?.id,
+          _apiId:       apiData?.id    || null,
         });
         saveState();
         close();
@@ -272,6 +277,10 @@ window.openAddProduct = function () {
     );
   });
 };
+
+// Both names point to the same function — script.js calls
+// window.openAddProduct() which is this, no recursion possible
+window.openAddProduct = window._openAddProductPatched;
 
 window.editProduct = function (id) {
   const p = STATE.products.find(x => x.id === id);
@@ -297,25 +306,20 @@ window.editProduct = function (id) {
       newStock[wh.id] = parseInt($(`#ps-${wh.id}`, overlay).value) || 0;
     });
 
-    const warehouseStock = STATE.warehouses.map(wh => ({
-      warehouseId: wh._apiId || wh.id,
-      quantity:    newStock[wh.id],
-    }));
+    const totalStock = Object.values(newStock).reduce((a, b) => a + b, 0);
 
     const payload = {
       name:              newName,
       sku:               newSku,
-      barcode:           newBarcode  || null,
-      category:          newCategory || null,
-      unit:              newUnit     || null,
+      barcode:           newBarcode     || null,
+      category:          newCategory    || null,
+      unit:              newUnit        || null,
       costPrice:         newCostPrice,
-      sellingPrice:      newSellingPrice,
-      price:             newSellingPrice,   // ← Prisma schema field name
-      lowStockThreshold: newReorderLevel,   // ← Prisma schema field name
-      reorderLevel:      newReorderLevel,
+      price:             newSellingPrice,
+      lowStockThreshold: newReorderLevel,
       supplierId:        newSupplierId,
       description:       newDescription || null,
-      warehouseStock,
+      stock:             totalStock,
     };
 
     const apiId = p._apiId || p.id;
@@ -371,7 +375,7 @@ window.deleteProduct = async function (id) {
   );
 };
 
-/* ── Stock adjustment ─────────────────────────────────────────── */
+/* ── Stock adjustment ──────────────────────────────────────────── */
 window.adjustStock = function (id) {
   const p = STATE.products.find(x => x.id === id);
   if (!p) return;
@@ -434,8 +438,7 @@ window.adjustStock = function (id) {
 
 /* ════════════════════════════════════════════════════════════════
    CUSTOMERS
-   ════════════════════════════════════════════════════════════════ */
-
+════════════════════════════════════════════════════════════════ */
 window.openAddCustomer = function () {
   modal('Add Customer', customerFormHTML(), async (overlay, close) => {
     const name = $('#cf-name', overlay).value.trim();
@@ -457,10 +460,10 @@ window.openAddCustomer = function () {
       () => window.API.createCustomer(payload),
       (apiData) => {
         STATE.customers.push({
-          id:           apiData?.id   || 'C' + uid(),
-          balance:      0,
+          id:             apiData?.id || 'C' + uid(),
+          balance:        0,
           totalPurchases: 0,
-          _apiId:       apiData?.id,
+          _apiId:         apiData?.id || null,
           ...payload,
         });
         saveState();
@@ -523,7 +526,7 @@ window.deleteCustomer = async function (id) {
 
 /* ════════════════════════════════════════════════════════════════
    SUPPLIERS
-   ════════════════════════════════════════════════════════════════ */
+════════════════════════════════════════════════════════════════ */
 window.openAddSupplier = function () {
   modal('Add Supplier', supplierFormHTML(), async (overlay, close) => {
     const name = $('#sf-name', overlay).value.trim();
@@ -544,9 +547,9 @@ window.openAddSupplier = function () {
       () => window.API.createSupplier(payload),
       (apiData) => {
         STATE.suppliers.push({
-          id:     apiData?.id || 'S' + uid(),
+          id:      apiData?.id || 'S' + uid(),
           balance: 0,
-          _apiId: apiData?.id,
+          _apiId:  apiData?.id || null,
           ...payload,
         });
         saveState();
@@ -608,7 +611,7 @@ window.deleteSupplier = async function (id) {
 
 /* ════════════════════════════════════════════════════════════════
    EXPENSES
-   ════════════════════════════════════════════════════════════════ */
+════════════════════════════════════════════════════════════════ */
 window.openAddExpense = function () {
   modal('Record Expense', `
     <div class="form-grid">
@@ -648,7 +651,7 @@ window.openAddExpense = function () {
         (apiData) => {
           STATE.expenses.push({
             id:     apiData?.id || uid(),
-            _apiId: apiData?.id,
+            _apiId: apiData?.id || null,
             ...payload,
             date:   payload.date + 'T00:00:00.000Z',
           });
@@ -681,21 +684,20 @@ window.deleteExpense = async function (id) {
 
 /* ════════════════════════════════════════════════════════════════
    BULK DISCOUNT TIERS
-   ════════════════════════════════════════════════════════════════ */
+════════════════════════════════════════════════════════════════ */
 window.openAddDiscountTier = function () {
   modal('Add Bulk Discount Tier', discountTierFormHTML(), async (overlay, close) => {
     const name   = $('#dt-name', overlay).value.trim();
-    const pct    = parseFloat($('#dt-pct',  overlay).value);
-    const min    = parseInt($('#dt-min',    overlay).value);
-    const maxRaw = parseInt($('#dt-max',    overlay).value) || 0;
+    const pct    = parseFloat($('#dt-pct', overlay).value);
+    const min    = parseInt($('#dt-min',   overlay).value);
+    const maxRaw = parseInt($('#dt-max',   overlay).value) || 0;
     const max    = maxRaw === 0 ? 99999 : maxRaw;
 
     if (!name || isNaN(pct) || isNaN(min)) return toast('Fill required fields.', 'warn');
     if (min >= max && max !== 99999) return toast('Max qty must be greater than min.', 'warn');
 
     const productIds = [...$$('.dt-prod', overlay)].filter(c => c.checked).map(c => c.value);
-
-    const payload = { name, discountPct: pct, minQty: min, maxQty: max, productIds, active: true };
+    const payload    = { name, discountPct: pct, minQty: min, maxQty: max, productIds, active: true };
 
     await dbSave(
       'Discount Tier', 'add',
@@ -703,7 +705,7 @@ window.openAddDiscountTier = function () {
       (apiData) => {
         STATE.bulkDiscountTiers.push({
           id:     apiData?.id || 'BD' + uid(),
-          _apiId: apiData?.id,
+          _apiId: apiData?.id || null,
           ...payload,
         });
         saveState();
@@ -725,7 +727,7 @@ window.editDiscountTier = function (id) {
     const payload = {
       name:        $('#dt-name', overlay).value.trim() || t.name,
       discountPct: parseFloat($('#dt-pct', overlay).value) || t.discountPct,
-      minQty:      parseInt($('#dt-min',  overlay).value) || t.minQty,
+      minQty:      parseInt($('#dt-min',  overlay).value)  || t.minQty,
       maxQty:      maxRaw === 0 ? 99999 : maxRaw,
       productIds:  [...$$('.dt-prod', overlay)].filter(c => c.checked).map(c => c.value),
       active:      t.active,
@@ -765,8 +767,8 @@ window.deleteDiscountTier = async function (id) {
 };
 
 /* ════════════════════════════════════════════════════════════════
-   STOCK TRANSFER  (doTransfer already exists — we patch it)
-   ════════════════════════════════════════════════════════════════ */
+   STOCK TRANSFER
+════════════════════════════════════════════════════════════════ */
 window.doTransfer = async function () {
   const pid  = $('#tf-product').value;
   const from = $('#tf-from').value;
@@ -786,10 +788,10 @@ window.doTransfer = async function () {
   const toWh   = STATE.warehouses.find(w => w.id === to);
 
   const payload = {
-    productId:   product._apiId || pid,
+    productId:       product._apiId || pid,
     fromWarehouseId: fromWh?._apiId || from,
     toWarehouseId:   toWh?._apiId   || to,
-    quantity:    qty,
+    quantity:        qty,
     note,
   };
 
@@ -807,7 +809,7 @@ window.doTransfer = async function () {
         fromName: getWarehouseName(from),
         toName:   getWarehouseName(to),
         qty, note, date: nowISO(),
-        _apiId: apiData?.id,
+        _apiId: apiData?.id || null,
       });
       saveState();
       renderWarehouseGrid();
@@ -818,8 +820,8 @@ window.doTransfer = async function () {
 };
 
 /* ════════════════════════════════════════════════════════════════
-   PURCHASES  (savePurchase already exists — we patch it)
-   ════════════════════════════════════════════════════════════════ */
+   PURCHASES
+════════════════════════════════════════════════════════════════ */
 window.savePurchase = async function () {
   if (!purchaseItems.length) return toast('Add at least one item.', 'warn');
   const supplierId = $('#pu-supplier').value;
@@ -831,7 +833,7 @@ window.savePurchase = async function () {
   const grandTotal = purchaseItems.reduce((s, i) => s + i.qty * i.cost, 0);
   const payStatus  = $('#pu-pay-status').value;
   const paidAmt    = parseFloat($('#pu-paid-amt').value) || 0;
-  const owed       = payStatus === 'credit' ? grandTotal
+  const owed       = payStatus === 'credit'  ? grandTotal
                    : payStatus === 'partial' ? grandTotal - paidAmt : 0;
 
   const items = purchaseItems.map(item => {
@@ -862,7 +864,6 @@ window.savePurchase = async function () {
     'Purchase', 'add',
     () => window.API.createPurchase(payload),
     (apiData) => {
-      // Update local stock + supplier balance
       purchaseItems.forEach(item => {
         const product = STATE.products.find(p => p.id === item.productId);
         if (product) {
@@ -883,7 +884,7 @@ window.savePurchase = async function () {
         grandTotal, paymentStatus: payStatus, paidAmt, owed,
         notes:         payload.notes,
         date:          payload.date + 'T00:00:00.000Z',
-        _apiId:        apiData?.id,
+        _apiId:        apiData?.id || null,
       });
       saveState();
       purchaseItems = [];
@@ -895,87 +896,82 @@ window.savePurchase = async function () {
 
 /* ════════════════════════════════════════════════════════════════
    POS — completeSale writes to API
-   (Patches the already-patched version from salesrep_monitor)
-   ════════════════════════════════════════════════════════════════ */
+════════════════════════════════════════════════════════════════ */
 (function patchCompleteSaleForDB() {
   const _prev = window.completeSale;
 
   window.completeSale = async function () {
-    // Let the existing function do all local work first
     const prevLen = STATE.sales.length;
-    _prev();   // synchronous path in original + salesrep patch
-    if (STATE.sales.length <= prevLen) return;   // bailed out
+    _prev();
+    if (STATE.sales.length <= prevLen) return;
 
     const newSale = STATE.sales[STATE.sales.length - 1];
     if (!newSale) return;
 
-    // Build API payload from the recorded sale
     const itemsPayload = newSale.items.map(i => {
       const prod = STATE.products.find(p => p.id === i.productId);
       return {
-        productId:          prod?._apiId || i.productId,
-        productName:        i.name,
-        quantity:           i.qty,
-        unitPrice:          i.unitPrice,
-        costPrice:          i.costPrice,
-        bulkDiscountPct:    i.bulkDiscountPct    || 0,
-        manualDiscountPct:  i.manualDiscountPct  || 0,
-        effectiveDiscountPct: i.effectiveDiscountPct || 0,
-        lineDiscount:       i.lineDiscount       || 0,
+        productId:            prod?._apiId || i.productId,
+        productName:          i.name,
+        quantity:             i.qty,
+        unitPrice:            i.unitPrice,
+        costPrice:            i.costPrice,
+        bulkDiscountPct:      i.bulkDiscountPct      || 0,
+        manualDiscountPct:    i.manualDiscountPct     || 0,
+        effectiveDiscountPct: i.effectiveDiscountPct  || 0,
+        lineDiscount:         i.lineDiscount          || 0,
       };
     });
 
-    const custObj   = STATE.customers.find(c => c.id === newSale.customerId);
-    const repObj    = STATE.salesReps.find(r => r.id === newSale.repId);
-    const whObj     = STATE.warehouses.find(w => w.id === newSale.warehouseId);
+    const custObj = STATE.customers.find(c => c.id === newSale.customerId);
+    const repObj  = STATE.salesReps.find(r => r.id === newSale.repId);
+    const whObj   = STATE.warehouses.find(w => w.id === newSale.warehouseId);
 
     const payload = {
-      receiptNo:      newSale.receiptNo  || null,
-      invoiceNo:      newSale.invoiceNo  || null,
-      customerId:     custObj?._apiId    || newSale.customerId  || null,
-      repId:          repObj?._apiId     || newSale.repId       || null,
-      warehouseId:    whObj?._apiId      || newSale.warehouseId || null,
-      items:          itemsPayload,
-      subtotal:       newSale.subtotal,
-      totalBulkDisc:  newSale.totalBulkDisc   || 0,
-      totalManualDisc:newSale.totalManualDisc  || 0,
-      extraDiscPct:   newSale.extraDiscPct     || 0,
-      extraDiscAmt:   newSale.extraDiscAmt     || 0,
-      totalDiscountAmt:newSale.totalDiscountAmt|| 0,
-      taxAmt:         newSale.taxAmt,
-      redeemPts:      newSale.redeemPts        || 0,
-      redeemVal:      newSale.redeemVal        || 0,
-      total:          newSale.total,
-      paymentMethod:  newSale.paymentMethod,
-      paymentStatus:  newSale.paymentStatus,
-      date:           newSale.date,
+      receiptNo:        newSale.receiptNo || null,
+      invoiceNo:        newSale.invoiceNo || null,
+      customerId:       custObj?._apiId   || newSale.customerId  || null,
+      repId:            repObj?._apiId    || newSale.repId       || null,
+      warehouseId:      whObj?._apiId     || newSale.warehouseId || null,
+      items:            itemsPayload,
+      subtotal:         newSale.subtotal,
+      totalBulkDisc:    newSale.totalBulkDisc   || 0,
+      totalManualDisc:  newSale.totalManualDisc  || 0,
+      extraDiscPct:     newSale.extraDiscPct     || 0,
+      extraDiscAmt:     newSale.extraDiscAmt     || 0,
+      totalDiscountAmt: newSale.totalDiscountAmt || 0,
+      taxAmt:           newSale.taxAmt,
+      redeemPts:        newSale.redeemPts        || 0,
+      redeemVal:        newSale.redeemVal        || 0,
+      total:            newSale.total,
+      paymentMethod:    newSale.paymentMethod,
+      paymentStatus:    newSale.paymentStatus,
+      date:             newSale.date,
     };
 
     try {
-      const res = await window.API.createSale(payload);
-      if (res?.data?.id) {
-        newSale._apiId = res.data.id;
-        saveState();
-      }
+      const res      = await window.API.createSale(payload);
+      const envelope = res?.data;
+      const saleData = envelope?.id ? envelope
+        : Object.values(envelope || {}).find(v => v && typeof v === 'object' && v.id)
+        || envelope;
+      if (saleData?.id) { newSale._apiId = saleData.id; saveState(); }
     } catch (err) {
       console.warn('[DB] Sale write failed — queued', err);
-      if (window.OfflineQueue) {
-        window.OfflineQueue.add({ type: 'createSale', data: payload });
-      }
-      // Sale already in STATE from local path — no extra toast needed
+      if (window.OfflineQueue) window.OfflineQueue.add({ type: 'createSale', data: payload });
     }
   };
 })();
 
 /* ════════════════════════════════════════════════════════════════
    QUOTES — saveAsQuote writes to API
-   ════════════════════════════════════════════════════════════════ */
+════════════════════════════════════════════════════════════════ */
 (function patchSaveAsQuoteForDB() {
   const _prev = window.saveAsQuote;
 
   window.saveAsQuote = async function () {
     const prevLen = STATE.quotes.length;
-    _prev();   // local save happens here
+    _prev();
     if (STATE.quotes.length <= prevLen) return;
 
     const q       = STATE.quotes[STATE.quotes.length - 1];
@@ -983,21 +979,25 @@ window.savePurchase = async function () {
     const whObj   = STATE.warehouses.find(w => w.id === q.warehouseId);
 
     const payload = {
-      quoteNo:    q.quoteNo,
-      customerId: custObj?._apiId || q.customerId || null,
-      warehouseId:whObj?._apiId   || q.warehouseId || null,
-      items:      q.items,
-      subtotal:   q.subtotal,
+      quoteNo:      q.quoteNo,
+      customerId:   custObj?._apiId || q.customerId  || null,
+      warehouseId:  whObj?._apiId   || q.warehouseId || null,
+      items:        q.items,
+      subtotal:     q.subtotal,
       extraDiscPct: q.extraDiscPct || 0,
-      taxAmt:     q.taxAmt,
-      total:      q.total,
-      validDays:  q.validDays || 7,
-      date:       q.date,
+      taxAmt:       q.taxAmt,
+      total:        q.total,
+      validDays:    q.validDays || 7,
+      date:         q.date,
     };
 
     try {
-      const res = await window.API.createQuote(payload);
-      if (res?.data?.id) { q._apiId = res.data.id; saveState(); }
+      const res       = await window.API.createQuote(payload);
+      const envelope  = res?.data;
+      const quoteData = envelope?.id ? envelope
+        : Object.values(envelope || {}).find(v => v && typeof v === 'object' && v.id)
+        || envelope;
+      if (quoteData?.id) { q._apiId = quoteData.id; saveState(); }
     } catch (err) {
       console.warn('[DB] Quote write failed — queued', err);
       if (window.OfflineQueue) window.OfflineQueue.add({ type: 'createQuote', data: payload });
@@ -1007,34 +1007,34 @@ window.savePurchase = async function () {
 
 /* ════════════════════════════════════════════════════════════════
    CREDIT NOTES — issueCreditNote writes to API
-   ════════════════════════════════════════════════════════════════ */
+════════════════════════════════════════════════════════════════ */
 (function patchIssueCreditNoteForDB() {
   const _prev = window.issueCreditNote;
 
   window.issueCreditNote = function (saleId) {
-    // We intercept the modal save — easiest is to wrap the push
-    const prevLen = STATE.creditNotes.length;
-
-    // Temporarily monkey-patch STATE.creditNotes.push
     const origPush = STATE.creditNotes.push.bind(STATE.creditNotes);
     STATE.creditNotes.push = async function (cn) {
       origPush(cn);
-      STATE.creditNotes.push = origPush;  // restore
+      STATE.creditNotes.push = origPush;
 
       const custObj = STATE.customers.find(c => c.id === cn.customerId);
       const payload = {
-        creditNoteNo:       cn.creditNoteNo,
-        originalInvoiceNo:  cn.originalInvoiceNo,
-        customerId:         custObj?._apiId || cn.customerId || null,
-        amount:             cn.amount,
-        reason:             cn.reason,
-        notes:              cn.notes,
-        date:               cn.date,
+        creditNoteNo:      cn.creditNoteNo,
+        originalInvoiceNo: cn.originalInvoiceNo,
+        customerId:        custObj?._apiId || cn.customerId || null,
+        amount:            cn.amount,
+        reason:            cn.reason,
+        notes:             cn.notes,
+        date:              cn.date,
       };
 
       try {
-        const res = await window.API.createCreditNote(payload);
-        if (res?.data?.id) { cn._apiId = res.data.id; saveState(); }
+        const res      = await window.API.createCreditNote(payload);
+        const envelope = res?.data;
+        const cnData   = envelope?.id ? envelope
+          : Object.values(envelope || {}).find(v => v && typeof v === 'object' && v.id)
+          || envelope;
+        if (cnData?.id) { cn._apiId = cnData.id; saveState(); }
       } catch (err) {
         console.warn('[DB] Credit note write failed — queued', err);
         if (window.OfflineQueue) window.OfflineQueue.add({ type: 'createCreditNote', data: payload });
@@ -1046,13 +1046,13 @@ window.savePurchase = async function () {
 })();
 
 /* ════════════════════════════════════════════════════════════════
-   QUOTE STATUS UPDATE — updateQuoteStatus writes to API
-   ════════════════════════════════════════════════════════════════ */
+   QUOTE STATUS UPDATE
+════════════════════════════════════════════════════════════════ */
 (function patchUpdateQuoteStatus() {
   const _prev = window.updateQuoteStatus;
 
   window.updateQuoteStatus = async function (quoteId, status) {
-    _prev(quoteId, status);   // update STATE + render locally
+    _prev(quoteId, status);
 
     const q     = STATE.quotes.find(x => x.id === quoteId);
     const apiId = q?._apiId || quoteId;
@@ -1061,33 +1061,30 @@ window.savePurchase = async function () {
       await window.API.updateQuote(apiId, { status });
     } catch (err) {
       console.warn('[DB] Quote status update failed — queued', err);
-      if (window.OfflineQueue) {
+      if (window.OfflineQueue)
         window.OfflineQueue.add({ type: 'updateQuote', id: apiId, data: { status } });
-      }
     }
   };
 })();
 
 /* ════════════════════════════════════════════════════════════════
-   MARK INVOICE PAID — also persists to API
-   ════════════════════════════════════════════════════════════════ */
+   MARK INVOICE PAID
+════════════════════════════════════════════════════════════════ */
 (function patchMarkInvoicePaid() {
   const _prev = window.markInvoicePaid;
 
   window.markInvoicePaid = async function (saleId) {
-    _prev(saleId);   // local update + render
+    _prev(saleId);
 
     const sale  = STATE.sales.find(s => s.id === saleId);
     const apiId = sale?._apiId || saleId;
 
     try {
-      await window.API.updateQuote(apiId, { paymentStatus: 'paid' });
-      // Note: reuse updateQuote endpoint or add updateSale to API layer
+      await window.API.updateSale(apiId, { paymentStatus: 'paid' });
     } catch (err) {
       console.warn('[DB] Invoice paid status failed — queued', err);
-      if (window.OfflineQueue) {
+      if (window.OfflineQueue)
         window.OfflineQueue.add({ type: 'markSalePaid', id: apiId, data: { paymentStatus: 'paid' } });
-      }
     }
   };
 })();

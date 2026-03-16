@@ -626,11 +626,26 @@ function openAddProduct(){
     const sku=$('#pf-sku',overlay).value.trim();
     if(!name||!sku)return toast('Name and SKU required.','warn');
     if(STATE.products.find(p=>p.sku===sku))return toast('SKU already exists.','error');
+
+    // ── DB patch handles the actual save when loaded ──────────
+    // If script_db_patch.js is loaded this modal save button gets
+    // re-bound by the patch. This fallback only fires offline.
+    if (window._dbPatchLoaded) {
+      // patch is loaded — close this and let patch's modal handle it
+      // (patch already overwrote openAddProduct on window,
+      //  but script-scope calls land here; we just re-invoke via window)
+      overlay.remove();
+      window.openAddProduct();
+      return;
+    }
+
     const stock={};
     STATE.warehouses.forEach(w=>{stock[w.id]=parseInt($(`#ps-${w.id}`,overlay).value)||0;});
     STATE.products.push({
-      id:'P'+uid(),name,sku,barcode:$('#pf-barcode',overlay).value.trim(),
-      category:$('#pf-cat',overlay).value.trim(),unit:$('#pf-unit',overlay).value.trim(),
+      id:'P'+uid(),name,sku,
+      barcode:$('#pf-barcode',overlay).value.trim(),
+      category:$('#pf-cat',overlay).value.trim(),
+      unit:$('#pf-unit',overlay).value.trim(),
       costPrice:parseFloat($('#pf-cost',overlay).value)||0,
       sellingPrice:parseFloat($('#pf-sell',overlay).value)||0,
       reorderLevel:parseInt($('#pf-reorder',overlay).value)||10,
@@ -3597,91 +3612,93 @@ function saveRepMonitorSettings() {
 }
 
 /* ════════════════════════════════════════════════════════════════
-   C.  WIRE INTO MAIN APP  (runs after DOMContentLoaded patches)
+   C.  WIRE INTO MAIN APP
+   Replace EVERYTHING from the line:
+     "document.addEventListener('DOMContentLoaded', async () => {"
+   near the bottom of script.js (the salesrep_monitor section C)
+   with this block. Keep everything above it unchanged.
    ════════════════════════════════════════════════════════════════ */
-// ────────────────────────────────────────────────
-// Initialize app + sync + rep-activity section
-// ────────────────────────────────────────────────
-document.addEventListener('DOMContentLoaded', async () => {
-  // 1. Make sure core state properties exist and expose STATE globally
-  if (!STATE.repActivityLog) STATE.repActivityLog = [];
-  window.STATE = STATE;   // ← expose to sync.js BEFORE pullAll runs
 
-  // 2. Try to pull real data from backend (if sync module is loaded)
-  if (window.SYNC) {
-    try {
-      await window.SYNC.pullAll();     // ← loads warehouses, products, etc. from DB
-      console.log('Backend data pulled successfully');
-    } catch (err) {
-      console.error('Failed to pull data from backend:', err);
+/* ── Settings save ── */
+function saveRepMonitorSettings() {
+  const t = parseInt($('#ra-daily-target')?.value) || 200000;
+  STATE.settings.repDailyTarget = t;
+  saveState();
+  toast(`Daily target set to ${fmt(t)} per rep.`, 'success');
+}
+
+/*
+  SINGLE init block — handles both "DOM not yet ready" and
+  "DOM already loaded" without firing twice.
+  We use a named flag so even if this script is eval'd multiple
+  times it only runs once.
+*/
+if (!window._cnjAppInited) {
+  window._cnjAppInited = true;
+
+  function _initApp() {
+    // Guard: don't run twice if somehow called again
+    if (window._cnjAppInitDone) return;
+    window._cnjAppInitDone = true;
+
+    // 1. Ensure state properties exist and expose globally
+    if (!STATE.repActivityLog) STATE.repActivityLog = [];
+    window.STATE = STATE;
+
+    // 2. Add rep-activity section if missing
+    if (!document.getElementById('rep-activity')) {
+      const section = document.createElement('section');
+      section.id = 'rep-activity';
+      document.querySelector('main')?.appendChild(section);
     }
 
-    // Optional: check connection / token validity
-    if (typeof window.SYNC.ping === 'function') {
-      window.SYNC.ping();
+    // 3. Add sidebar nav link (after Sales Reps)
+    const salesRepLink = document.querySelector('.sidebar a[href="#sales-reps"]');
+    if (salesRepLink && !document.querySelector('.sidebar a[href="#rep-activity"]')) {
+      const repLink = document.createElement('a');
+      repLink.href = '#rep-activity';
+      repLink.innerHTML = '📊 Rep Activity';
+      repLink.onclick = () => showSection('rep-activity');
+      salesRepLink.after(repLink);
     }
-  } else {
-    console.warn('SYNC module not found — running in localStorage-only mode');
-  }
 
-  // 3. Add rep-activity section if missing
-  if (!document.getElementById('rep-activity')) {
-    const section = document.createElement('section');
-    section.id = 'rep-activity';
-    document.querySelector('main')?.appendChild(section);
-  }
-
-  // 4. Add sidebar navigation link (after Sales Reps)
-  const salesRepLink = document.querySelector('.sidebar a[href="#sales-reps"]');
-  if (salesRepLink && !document.querySelector('.sidebar a[href="#rep-activity"]')) {
-    const repLink = document.createElement('a');
-    repLink.href = '#rep-activity';
-    repLink.innerHTML = '📊 Rep Activity';
-    repLink.onclick = () => showSection('rep-activity');
-    salesRepLink.after(repLink);
-  }
-
-  // 5. Extend / patch showSection to handle rep-activity
-  if (typeof window.showSection === 'function') {
-    const originalShowSection = window.showSection;
-    window.showSection = function (sectionId) {
-      originalShowSection(sectionId);
-
-      if (sectionId === 'rep-activity') {
-        if (typeof renderRepActivity === 'function') {
+    // 4. Patch showSection to handle rep-activity
+    if (typeof window.showSection === 'function') {
+      const _origShow = window.showSection;
+      window.showSection = function (sectionId) {
+        _origShow(sectionId);
+        if (sectionId === 'rep-activity' && typeof renderRepActivity === 'function') {
           renderRepActivity();
-        } else {
-          console.warn('renderRepActivity() function not defined yet');
         }
-      }
-    };
-  } else {
-    console.warn('showSection() not found — navigation patching skipped');
-  }
+      };
+    }
 
-  // 6. Show default section
-  if (typeof showSection === 'function') {
+    // 5. Pull backend data THEN show dashboard
+    //    (keeps UI showing while fetch is in progress)
     showSection('dashboard');
+
+    if (window.SYNC) {
+      window.SYNC.pullAll()
+        .then(() => {
+          console.log('Backend data pulled successfully');
+          // Refresh whatever section is currently active
+          const activeSection = document.querySelector('section.active');
+          if (activeSection) showSection(activeSection.id);
+        })
+        .catch(err => console.error('Failed to pull data from backend:', err));
+
+      if (typeof window.SYNC.ping === 'function') {
+        window.SYNC.ping();
+      }
+    } else {
+      console.warn('SYNC module not found — running in localStorage-only mode');
+    }
   }
 
-}, { once: true });
-
-// ────────────────────────────────────────────────
-// Fallback: run immediately if DOM already loaded
-// (important when this script is loaded defer/async or late)
-// ────────────────────────────────────────────────
-if (document.readyState !== 'loading') {
-  // Re-run the most critical parts (state + section creation)
-  if (!STATE.repActivityLog) {
-    STATE.repActivityLog = [];
+  // Fire immediately if DOM is ready, otherwise wait
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', _initApp, { once: true });
+  } else {
+    _initApp();
   }
-
-  if (!document.getElementById('rep-activity')) {
-    const section = document.createElement('section');
-    section.id = 'rep-activity';
-    document.querySelector('main')?.appendChild(section);
-  }
-
-  // You can optionally call the full init logic again here,
-  // but usually just the above two are enough for fallback
 }

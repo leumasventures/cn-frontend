@@ -23,7 +23,37 @@
 async function dbSave(entityName, action, apiFn, onSuccess, queueItem) {
   try {
     const res = await apiFn();
-    onSuccess(res?.data || null);
+
+    /*
+      api_layer.js wraps every response as { ok: true, data: <json> }
+      The backend itself may nest the record one level deeper, e.g.:
+        { success: true, product: { id, name, … } }   ← createProduct
+        { success: true, warehouse: { id, … } }        ← createWarehouse
+        { success: true, customer: { id, … } }         ← createCustomer
+        { id, name, … }                                ← some endpoints return root-level
+
+      We try to extract the actual record by looking for the first
+      object-valued key that has an "id" field.  If nothing matches
+      we fall back to res.data itself.
+    */
+    const envelope = res?.data;           // unwrap api_layer wrapper
+    let apiData = null;
+
+    if (envelope && typeof envelope === 'object') {
+      if (envelope.id) {
+        // Root-level record  { id, name, … }
+        apiData = envelope;
+      } else {
+        // Nested record  { success, product: { id, … } }
+        const nested = Object.values(envelope).find(
+          v => v && typeof v === 'object' && !Array.isArray(v) && v.id
+        );
+        apiData = nested || envelope;
+      }
+    }
+
+    onSuccess(apiData);
+
     if (typeof window.toast === 'function') {
       const msg = {
         add:    `${entityName} saved.`,
@@ -34,10 +64,12 @@ async function dbSave(entityName, action, apiFn, onSuccess, queueItem) {
       window.toast(msg, type);
     }
   } catch (err) {
-    const isOffline = !navigator.onLine || err.message?.includes('offline')
-      || err.message?.includes('timed out') || err.message?.includes('Failed to fetch');
+    const isOffline = !navigator.onLine
+      || err.message?.includes('offline')
+      || err.message?.includes('timed out')
+      || err.message?.includes('Failed to fetch');
 
-    // 404 on a delete = record doesn't exist on server, remove locally anyway
+    // 404 on a delete = record already gone on server, remove locally anyway
     const isNotFound = err.message?.includes('[404]');
     if (action === 'delete' && isNotFound) {
       onSuccess(null);
@@ -48,11 +80,11 @@ async function dbSave(entityName, action, apiFn, onSuccess, queueItem) {
 
     console.warn(`[DB] ${entityName} ${action} failed:`, err.message);
 
-    if (isOffline || err.message?.includes('timed out') || err.message?.includes('fetch')) {
+    if (isOffline || err.message?.includes('fetch')) {
       onSuccess(null);
       if (window.OfflineQueue && queueItem) window.OfflineQueue.add(queueItem);
       if (typeof window.toast === 'function')
-        window.toast(`Saved locally (DB offline). Will sync when reconnected.`, 'warn');
+        window.toast('Saved locally (DB offline). Will sync when reconnected.', 'warn');
     } else {
       if (typeof window.toast === 'function')
         window.toast(`Save failed: ${err.message}`, 'error');

@@ -1,23 +1,12 @@
 /* ================================================================
    sync.js  —  C.N. Johnson Ventures
-   
-   window.SYNC — pulls all collections from the MySQL backend
-   and merges them into STATE on page load.
-   
-   Also provides:
-   • SYNC.pushSettings()  — writes STATE.settings to DB
-   • SYNC.ping()          — checks if backend is reachable
-   
-   Load AFTER api_layer.js and offline_queue.js,
-   BEFORE script.js (so STATE exists when sync runs).
 ================================================================ */
 
 (function () {
   'use strict';
 
-  /* ── Status indicator in the page header ─────────────────── */
+  /* ── Status indicator ─────────────────────────────────────── */
   function setStatus(state) {
-    // state: 'syncing' | 'ok' | 'offline' | 'error'
     let dot = document.getElementById('sync-dot');
     if (!dot) {
       dot = document.createElement('div');
@@ -29,19 +18,16 @@
         gap:.4rem;transition:all .3s;pointer-events:none;`;
       document.body.appendChild(dot);
     }
-
     const cfg = {
-      syncing: { bg:'#2563eb', text:'#fff', icon:'⟳', label:'Syncing…'         },
+      syncing: { bg:'#2563eb', text:'#fff',    icon:'⟳', label:'Syncing…'      },
       ok:      { bg:'#d1fae5', text:'#065f46', icon:'✓', label:'DB Connected'  },
       offline: { bg:'#fef9c3', text:'#92400e', icon:'⚡', label:'Offline Mode' },
       error:   { bg:'#fee2e2', text:'#991b1b', icon:'✕', label:'DB Error'      },
     };
     const c = cfg[state] || cfg.offline;
     dot.style.background = c.bg;
-    dot.style.color = c.text;
-    dot.innerHTML = `<span>${c.icon}</span><span>${c.label}</span>`;
-
-    // Auto-hide the "ok" badge after 4 s
+    dot.style.color      = c.text;
+    dot.innerHTML        = `<span>${c.icon}</span><span>${c.label}</span>`;
     if (state === 'ok') {
       clearTimeout(dot._timer);
       dot._timer = setTimeout(() => { dot.style.opacity = '0'; }, 4000);
@@ -50,64 +36,82 @@
     }
   }
 
-  /* ── Merge helpers ───────────────────────────────────────── */
-
-  /**
-   * Merge a server array into a STATE array.
-   * Items that exist locally (matched by _apiId or id) are updated.
-   * New items from the server are added.
-   * Local-only items (no _apiId yet) are preserved.
-   *
-   * @param {Array}  localArr   — e.g. STATE.products
-   * @param {Array}  serverArr  — array from API response
-   * @param {Function} mapFn   — transforms a server object to local shape
-   */
+  /* ── Generic merge ───────────────────────────────────────── */
   function mergeArray(localArr, serverArr, mapFn) {
     if (!Array.isArray(serverArr) || !serverArr.length) return localArr;
-
     const merged = [...localArr];
-
     serverArr.forEach(serverItem => {
-      const localIdx = merged.findIndex(
+      const idx = merged.findIndex(
         l => l._apiId === serverItem.id || l.id === serverItem.id
       );
       const mapped = mapFn(serverItem);
-
-      if (localIdx >= 0) {
-        // Update existing — preserve local fields like posCart state
-        merged[localIdx] = { ...merged[localIdx], ...mapped, _apiId: serverItem.id };
+      if (idx >= 0) {
+        merged[idx] = { ...merged[idx], ...mapped, _apiId: serverItem.id };
       } else {
         merged.push({ ...mapped, _apiId: serverItem.id });
       }
     });
-
     return merged;
   }
 
-  /* ── Field mappers (server → STATE shape) ─────────────────── */
+  /* ── Smart product merge (preserves per-warehouse stock map) */
+  function mergeProducts(localArr, serverArr) {
+    if (!Array.isArray(serverArr) || !serverArr.length) return localArr;
+    const merged = [...localArr];
+    serverArr.forEach(serverItem => {
+      const idx          = merged.findIndex(
+        l => l._apiId === serverItem.id || l.id === serverItem.id
+      );
+      const mapped       = mapProduct(serverItem);
+      const serverFlat   = parseInt(serverItem.stock) || 0;
+
+      if (idx >= 0) {
+        const existing   = merged[idx];
+        const localTotal = Object.values(existing.stock || {}).reduce((a, b) => a + b, 0);
+        // Keep local per-warehouse map if totals match; use server value if changed elsewhere
+        const finalStock = localTotal === serverFlat ? existing.stock : mapped.stock;
+        merged[idx] = { ...existing, ...mapped, stock: finalStock, _apiId: serverItem.id };
+      } else {
+        merged.push({ ...mapped, _apiId: serverItem.id });
+      }
+    });
+    return merged;
+  }
+
+  /* ── Field mappers ───────────────────────────────────────── */
 
   function mapWarehouse(s) {
-    return { id: s.id, name: s.name, location: s.location || '', manager: s.manager || '', _apiId: s.id };
+    return {
+      id:       s.id,
+      _apiId:   s.id,
+      name:     s.name,
+      location: s.location || '',
+      manager:  s.manager  || '',
+    };
   }
 
   function mapProduct(s) {
-    const stock = {};
-    if (Array.isArray(s.warehouseStock)) {
-      s.warehouseStock.forEach(ws => { stock[ws.warehouseId] = ws.quantity || 0; });
+    const flatStock  = parseInt(s.stock) || 0;
+    const warehouses = window.STATE?.warehouses || [];
+    const stock      = {};
+    if (warehouses.length > 0) {
+      warehouses.forEach((wh, idx) => { stock[wh.id] = idx === 0 ? flatStock : 0; });
+    } else {
+      stock['__default__'] = flatStock;
     }
     return {
       id:           s.id,
       _apiId:       s.id,
-      name:         s.name,
-      sku:          s.sku,
-      barcode:      s.barcode       || '',
-      category:     s.category      || '',
-      unit:         s.unit          || '',
-      costPrice:    parseFloat(s.costPrice)    || 0,
-      sellingPrice: parseFloat(s.sellingPrice) || 0,
-      reorderLevel: parseInt(s.reorderLevel)   || 10,
-      supplierId:   s.supplierId    || '',
-      description:  s.description   || '',
+      name:         s.name         || '',
+      sku:          s.sku          || '',
+      barcode:      s.barcode      || '',
+      category:     s.category?.name || s.category || '',
+      unit:         s.unit         || '',
+      costPrice:    parseFloat(s.costPrice)                       || 0,
+      sellingPrice: parseFloat(s.price       || s.sellingPrice)   || 0,
+      reorderLevel: parseInt(s.lowStockThreshold || s.reorderLevel) || 10,
+      supplierId:   s.supplierId   || '',
+      description:  s.description  || '',
       stock,
     };
   }
@@ -116,7 +120,7 @@
     return {
       id:             s.id,
       _apiId:         s.id,
-      name:           s.name,
+      name:           s.name           || '',
       customerType:   s.customerType   || 'retail',
       phone:          s.phone          || '',
       email:          s.email          || '',
@@ -134,7 +138,7 @@
       id:       s.id,
       _apiId:   s.id,
       name:     s.name,
-      contact:  s.contact  || '',
+      contact:  s.contactPerson || s.contact || '',
       phone:    s.phone    || '',
       email:    s.email    || '',
       address:  s.address  || '',
@@ -149,109 +153,138 @@
       id:          s.id,
       _apiId:      s.id,
       name:        s.name,
-      phone:       s.phone       || '',
-      email:       s.email       || '',
-      warehouseId: s.warehouseId || '',
+      phone:       s.phone             || '',
+      email:       s.email             || '',
+      // warehouse can come back as a nested object or just an id
+      warehouseId: s.warehouseId || s.warehouse?.id || '',
       commission:  parseFloat(s.commission) || 2,
       totalSales:  parseFloat(s.totalSales) || 0,
     };
   }
 
   function mapSale(s) {
+    // items may be nested SaleItem objects from the DB
+    const items = (s.items || []).map(i => ({
+      productId:  i.productId,
+      name:       i.product?.name || i.productName || '',
+      unit:       i.product?.unit || i.unit        || '',
+      qty:        i.qty,
+      unitPrice:  parseFloat(i.price)    || 0,
+      costPrice:  parseFloat(i.product?.costPrice || i.costPrice) || 0,
+      discount:   parseFloat(i.discount) || 0,
+      total:      parseFloat(i.total)    || 0,
+      bulkDiscountPct:      i.bulkDiscountPct      || 0,
+      manualDiscountPct:    i.manualDiscountPct     || 0,
+      effectiveDiscountPct: i.effectiveDiscountPct  || 0,
+      lineDiscount:         i.lineDiscount          || 0,
+    }));
+
     return {
       id:              s.id,
+      _apiId:          s.id,
       receiptNo:       s.receiptNo      || null,
       invoiceNo:       s.invoiceNo      || null,
       customerId:      s.customerId     || '',
-      customerName:    s.customerName   || 'Walk-in',
+      customerName:    s.customer?.name || s.customerName || 'Walk-in',
       repId:           s.repId          || '',
       repName:         s.repName        || '',
       warehouseId:     s.warehouseId    || '',
-      items:           s.items          || [],
-      subtotal:        parseFloat(s.subtotal)          || 0,
-      totalBulkDisc:   parseFloat(s.totalBulkDisc)     || 0,
-      totalManualDisc: parseFloat(s.totalManualDisc)   || 0,
-      extraDiscPct:    parseFloat(s.extraDiscPct)      || 0,
-      extraDiscAmt:    parseFloat(s.extraDiscAmt)      || 0,
-      totalDiscountAmt:parseFloat(s.totalDiscountAmt)  || 0,
-      taxAmt:          parseFloat(s.taxAmt)            || 0,
-      redeemPts:       parseInt(s.redeemPts)           || 0,
-      redeemVal:       parseFloat(s.redeemVal)         || 0,
-      total:           parseFloat(s.total)             || 0,
-      paymentMethod:   s.paymentMethod  || 'cash',
+      items,
+      subtotal:        parseFloat(s.subtotal)  || 0,
+      totalBulkDisc:   parseFloat(s.totalBulkDisc  || s.discount) || 0,
+      totalManualDisc: parseFloat(s.totalManualDisc) || 0,
+      extraDiscPct:    parseFloat(s.extraDiscPct)    || 0,
+      extraDiscAmt:    parseFloat(s.extraDiscAmt)    || 0,
+      totalDiscountAmt:parseFloat(s.totalDiscountAmt || s.discount) || 0,
+      taxAmt:          parseFloat(s.taxAmt || s.tax) || 0,
+      redeemPts:       parseInt(s.redeemPts   || s.pointsRedeemed) || 0,
+      redeemVal:       parseFloat(s.redeemVal) || 0,
+      total:           parseFloat(s.total)     || 0,
+      paymentMethod:   (s.paymentMethod || 'cash').toLowerCase(),
       paymentStatus:   s.paymentStatus  || 'paid',
-      date:            s.date           || new Date().toISOString(),
-      notes:           s.notes          || '',
-      type:            s.type           || undefined,
+      date:            s.createdAt || s.date || new Date().toISOString(),
+      notes:           s.note || s.notes || '',
+      type:            s.type || undefined,
     };
   }
 
   function mapPurchase(s) {
     return {
       id:            s.id,
-      invoiceNo:     s.invoiceNo     || '',
+      _apiId:        s.id,
+      invoiceNo:     s.purchaseNo    || s.invoiceNo    || '',
       supplierId:    s.supplierId    || '',
-      supplierName:  s.supplierName  || '',
+      supplierName:  s.supplier?.name || s.supplierName || '',
       warehouseId:   s.warehouseId   || '',
-      warehouseName: s.warehouseName || '',
-      items:         s.items         || [],
-      grandTotal:    parseFloat(s.grandTotal)    || 0,
+      warehouseName: s.warehouse?.name || s.warehouseName || '',
+      items:         (s.items || []).map(i => ({
+        productId:   i.productId,
+        name:        i.product?.name || i.productName || '',
+        unit:        i.product?.unit || i.unit        || '',
+        qty:         i.qty,
+        cost:        parseFloat(i.costPrice) || 0,
+      })),
+      grandTotal:    parseFloat(s.total || s.grandTotal) || 0,
       paymentStatus: s.paymentStatus || 'paid',
-      paidAmt:       parseFloat(s.paidAmt)       || 0,
-      owed:          parseFloat(s.owed)           || 0,
-      notes:         s.notes         || '',
-      date:          s.date          || new Date().toISOString(),
+      paidAmt:       parseFloat(s.paidAmount || s.paidAmt) || 0,
+      owed:          parseFloat(s.owed)        || 0,
+      notes:         s.note || s.notes         || '',
+      date:          s.createdAt || s.date     || new Date().toISOString(),
     };
   }
 
   function mapExpense(s) {
     return {
       id:          s.id,
+      _apiId:      s.id,
       category:    s.category    || '',
       amount:      parseFloat(s.amount) || 0,
-      date:        s.date        || new Date().toISOString(),
+      date:        s.date || s.createdAt || new Date().toISOString(),
       paidBy:      s.paidBy      || '',
-      description: s.description || '',
+      description: s.description || s.title || '',
     };
   }
 
   function mapQuote(s) {
     return {
       id:           s.id,
+      _apiId:       s.id,
       quoteNo:      s.quoteNo      || '',
       customerId:   s.customerId   || '',
-      customerName: s.customerName || 'Walk-in',
+      customerName: s.customer?.name || s.customerName || 'Walk-in',
       warehouseId:  s.warehouseId  || '',
       items:        s.items        || [],
-      subtotal:     parseFloat(s.subtotal)    || 0,
-      extraDiscPct: parseFloat(s.extraDiscPct)|| 0,
-      taxAmt:       parseFloat(s.taxAmt)      || 0,
-      total:        parseFloat(s.total)       || 0,
-      validDays:    parseInt(s.validDays)     || 7,
+      subtotal:     parseFloat(s.subtotal)     || 0,
+      extraDiscPct: parseFloat(s.extraDiscPct) || 0,
+      taxAmt:       parseFloat(s.taxAmt || s.tax) || 0,
+      total:        parseFloat(s.total)        || 0,
+      validDays:    parseInt(s.validDays)      || 7,
       status:       s.status       || 'pending',
-      date:         s.date         || new Date().toISOString(),
-      notes:        s.notes        || '',
+      date:         s.createdAt || s.date || new Date().toISOString(),
+      notes:        s.note || s.notes || '',
     };
   }
 
   function mapCreditNote(s) {
     return {
-      id:                 s.id,
-      creditNoteNo:       s.creditNoteNo       || '',
-      originalInvoiceNo:  s.originalInvoiceNo  || '',
-      customerId:         s.customerId         || '',
-      customerName:       s.customerName       || '',
-      amount:             parseFloat(s.amount) || 0,
-      reason:             s.reason             || '',
-      notes:              s.notes              || '',
-      date:               s.date               || new Date().toISOString(),
-      status:             s.status             || 'issued',
+      id:                s.id,
+      _apiId:            s.id,
+      creditNoteNo:      s.creditNo  || s.creditNoteNo      || '',
+      originalInvoiceNo: s.originalInvoiceNo || '',
+      customerId:        s.customerId        || '',
+      customerName:      s.customer?.name || s.customerName || '',
+      amount:            parseFloat(s.amount) || 0,
+      reason:            s.reason            || '',
+      notes:             s.note || s.notes   || '',
+      date:              s.createdAt || s.date || new Date().toISOString(),
+      status:            s.status            || 'issued',
     };
   }
 
   function mapDiscountTier(s) {
     return {
       id:          s.id,
+      _apiId:      s.id,
       name:        s.name,
       discountPct: parseFloat(s.discountPct) || 0,
       minQty:      parseInt(s.minQty)        || 0,
@@ -263,7 +296,6 @@
 
   function mapSettings(s) {
     if (!s) return {};
-    // Only bring in fields that exist on the server record
     const allowed = [
       'companyName','address','phone','email','currency','taxRate',
       'lowStockThreshold','invoicePrefix','receiptPrefix','quotePrefix',
@@ -276,7 +308,16 @@
     return out;
   }
 
-  /* ── Main pull function ──────────────────────────────────── */
+  /* ── Extract array from various response shapes ──────────── */
+  function extractArray(data, ...keys) {
+    for (const key of keys) {
+      if (Array.isArray(data?.[key])) return data[key];
+    }
+    if (Array.isArray(data)) return data;
+    return null;
+  }
+
+  /* ── Main pull ───────────────────────────────────────────── */
   async function pullAll() {
     setStatus('syncing');
 
@@ -290,27 +331,19 @@
       return false;
     }
 
-    if (!serverData) {
-      setStatus('error');
-      return false;
-    }
+    if (!serverData) { setStatus('error'); return false; }
 
-    /* ── Guard: STATE must exist. script.js defines it synchronously on
-       parse, but if for any reason it isn't ready yet we retry up to
-       20 times (2 seconds total) before giving up. ── */
+    /* Wait for STATE */
     if (typeof window.STATE === 'undefined') {
       let resolved = false;
       await new Promise(resolve => {
         let attempts = 0;
-        const interval = setInterval(() => {
+        const iv = setInterval(() => {
           attempts++;
           if (typeof window.STATE !== 'undefined') {
-            clearInterval(interval);
-            resolved = true;
-            resolve();
+            clearInterval(iv); resolved = true; resolve();
           } else if (attempts >= 20) {
-            clearInterval(interval);
-            resolve(); // resolve anyway, resolved stays false
+            clearInterval(iv); resolve();
           }
         }, 100);
       });
@@ -323,33 +356,72 @@
 
     const ST = window.STATE;
 
-    /* Merge each collection */
-    if (serverData.warehouses)     ST.warehouses     = mergeArray(ST.warehouses,     serverData.warehouses,     mapWarehouse);
-    if (serverData.products)       ST.products       = mergeArray(ST.products,       serverData.products,       mapProduct);
-    if (serverData.customers)      ST.customers      = mergeArray(ST.customers,      serverData.customers,      mapCustomer);
-    if (serverData.suppliers)      ST.suppliers      = mergeArray(ST.suppliers,      serverData.suppliers,      mapSupplier);
-    if (serverData.salesReps)      ST.salesReps      = mergeArray(ST.salesReps,      serverData.salesReps,      mapSalesRep);
-    if (serverData.sales)          ST.sales          = mergeArray(ST.sales,          serverData.sales,          mapSale);
-    if (serverData.purchases)      ST.purchases      = mergeArray(ST.purchases,      serverData.purchases,      mapPurchase);
-    if (serverData.expenses)       ST.expenses       = mergeArray(ST.expenses,       serverData.expenses,       mapExpense);
-    if (serverData.quotes)         ST.quotes         = mergeArray(ST.quotes,         serverData.quotes,         mapQuote);
-    if (serverData.creditNotes)    ST.creditNotes    = mergeArray(ST.creditNotes,    serverData.creditNotes,    mapCreditNote);
-    if (serverData.bulkDiscountTiers) ST.bulkDiscountTiers = mergeArray(ST.bulkDiscountTiers, serverData.bulkDiscountTiers, mapDiscountTier);
+    // 1. Warehouses first (mapProduct needs them)
+    const warehouses = extractArray(serverData, 'warehouses');
+    if (warehouses) ST.warehouses = mergeArray(ST.warehouses, warehouses, mapWarehouse);
 
-    /* Merge settings (server wins for most fields) */
-    if (serverData.settings) {
+    // 2. Products — smart merge preserving per-warehouse stock
+    const products = extractArray(serverData, 'products');
+    if (products) ST.products = mergeProducts(ST.products, products);
+
+    // 3. Customers
+    const customers = extractArray(serverData, 'customers');
+    if (customers) ST.customers = mergeArray(ST.customers, customers, mapCustomer);
+
+    // 4. Suppliers
+    const suppliers = extractArray(serverData, 'suppliers');
+    if (suppliers) ST.suppliers = mergeArray(ST.suppliers, suppliers, mapSupplier);
+
+    // 5. Sales Reps — backend returns { data: [...] } OR { salesReps: [...] }
+    const salesReps = extractArray(serverData, 'salesReps', 'data');
+    if (salesReps) ST.salesReps = mergeArray(ST.salesReps, salesReps, mapSalesRep);
+
+    // 6. Sales
+    const sales = extractArray(serverData, 'sales');
+    if (sales) ST.sales = mergeArray(ST.sales, sales, mapSale);
+
+    // 7. Purchases
+    const purchases = extractArray(serverData, 'purchases');
+    if (purchases) ST.purchases = mergeArray(ST.purchases, purchases, mapPurchase);
+
+    // 8. Expenses
+    const expenses = extractArray(serverData, 'expenses');
+    if (expenses) ST.expenses = mergeArray(ST.expenses, expenses, mapExpense);
+
+    // 9. Quotes
+    const quotes = extractArray(serverData, 'quotes');
+    if (quotes) ST.quotes = mergeArray(ST.quotes, quotes, mapQuote);
+
+    // 10. Credit Notes
+    const creditNotes = extractArray(serverData, 'creditNotes');
+    if (creditNotes) ST.creditNotes = mergeArray(ST.creditNotes, creditNotes, mapCreditNote);
+
+    // 11. Bulk Discount Tiers
+    const tiers = extractArray(serverData, 'bulkDiscountTiers');
+    if (tiers) ST.bulkDiscountTiers = mergeArray(ST.bulkDiscountTiers, tiers, mapDiscountTier);
+
+    // 12. Settings
+    if (serverData.settings)
       ST.settings = { ...ST.settings, ...mapSettings(serverData.settings) };
+
+    /* Fix sentinel stock keys if warehouses weren't ready earlier */
+    const firstWhId = ST.warehouses?.[0]?.id;
+    if (firstWhId) {
+      ST.products.forEach(p => {
+        if (p.stock?.['__default__'] !== undefined) {
+          p.stock[firstWhId] = p.stock['__default__'];
+          delete p.stock['__default__'];
+        }
+      });
     }
 
-    /* Persist merged state back to localStorage */
     if (typeof window.saveState === 'function') window.saveState();
-
     setStatus('ok');
     console.log('[SYNC] ✅ Pull complete');
     return true;
   }
 
-  /* ── Push settings to server ─────────────────────────────── */
+  /* ── Push settings ───────────────────────────────────────── */
   async function pushSettings() {
     if (!window.STATE) return;
     try {
@@ -357,26 +429,17 @@
       console.log('[SYNC] Settings pushed to DB');
     } catch (err) {
       console.warn('[SYNC] Settings push failed — queued', err);
-      if (window.OfflineQueue) {
+      if (window.OfflineQueue)
         window.OfflineQueue.add({ type: 'updateSettings', data: window.STATE.settings });
-      }
     }
   }
 
-  /* ── Ping DB ─────────────────────────────────────────────── */
+  /* ── Ping ────────────────────────────────────────────────── */
   async function ping() {
-    try {
-      await window.API.ping();
-      setStatus('ok');
-      return true;
-    } catch {
-      setStatus('offline');
-      return false;
-    }
+    try { await window.API.ping(); setStatus('ok'); return true; }
+    catch { setStatus('offline'); return false; }
   }
 
-  /* ── Public ──────────────────────────────────────────────── */
   window.SYNC = { pullAll, pushSettings, ping, setStatus };
-
   console.log('[SYNC] Module ready');
 })();
