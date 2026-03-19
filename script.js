@@ -1,16 +1,20 @@
 /* ================================================================
-   C.N. Johnson Ventures Ltd — Sales, Invoice & Inventory System
-   script.js · Full Application Logic — Enhanced Edition
-   ================================================================ */
+   C.N. Johnson Ventures Ltd — script.js  (DB-First Edition)
+   ─────────────────────────────────────────────────────────────────
+   STORAGE POLICY:
+     localStorage  →  auth tokens ONLY (managed by auth-guard.js)
+     In-memory     →  STATE object (ephemeral, re-fetched each page)
+     Database      →  single source of truth for ALL business data
 
+   Every read/write for business data goes through API (api_layer.js).
+   STATE is never persisted to localStorage or sessionStorage.
+   ================================================================ */
 'use strict';
 
 /* ════════════════════════════════════════════════════════════════
-   1.  STATE & PERSISTENCE
+   1.  IN-MEMORY STATE  (populated from DB on every page load)
    ════════════════════════════════════════════════════════════════ */
-const DB_KEY = 'cnjohnson_db_v1';
-
-const defaultState = () => ({
+const STATE = {
   settings: {
     companyName: 'C.N. Johnson Ventures Limited',
     address: 'Aba, Abia State, Nigeria',
@@ -22,119 +26,105 @@ const defaultState = () => ({
     invoicePrefix: 'INV',
     receiptPrefix: 'RCP',
     quotePrefix: 'QTE',
-    debitNotePrefix: 'DN',
     creditNotePrefix: 'CN',
+    enableBulkDiscount: true,
+    loyaltyPointsRate: 1,
+    loyaltyRedemptionRate: 100,
     nextInvoiceNo: 1001,
     nextReceiptNo: 5001,
     nextQuoteNo: 2001,
-    nextDebitNoteNo: 3001,
     nextCreditNoteNo: 4001,
-    enableBulkDiscount: true,
-    loyaltyPointsRate: 1,      // points per ₦1000 spent
-    loyaltyRedemptionRate: 100, // ₦ value per point
+    nextPurchaseNo: 3001,
+    repDailyTarget: 200000,
   },
-  // ── BULK DISCOUNT TIERS ─────────────────────────────────────
-  // Each tier: { id, name, minQty, maxQty, discountPct, productIds ([] = all), active }
-  products: [],
   warehouses: [],
+  products: [],
   customers: [],
   suppliers: [],
   salesReps: [],
-  bulkDiscountTiers: [],
   sales: [],
-  invoices: [],
   purchases: [],
   expenses: [],
+  quotes: [],
+  creditNotes: [],
+  bulkDiscountTiers: [],
   stockTransfers: [],
-  quotes: [],           // NEW: price quotations
-  debitNotes: [],       // NEW: debit notes
-  creditNotes: [],      // NEW: credit notes
-  loyaltyTransactions: [], // NEW: loyalty log
-  priceHistory: [],     // NEW: price change audit log
-});
+  priceHistory: [],   // client-side audit log only (not persisted)
+};
 
-function loadState() {
-  try {
-    const raw = localStorage.getItem(DB_KEY);
-    if (!raw) return defaultState();
-    const saved = JSON.parse(raw);
-    const def   = defaultState();
-    const merged = { ...def, ...saved, settings: { ...def.settings, ...saved.settings } };
-    // ensure new arrays exist
-    merged.quotes             = merged.quotes || [];
-    merged.debitNotes         = merged.debitNotes || [];
-    merged.creditNotes        = merged.creditNotes || [];
-    merged.loyaltyTransactions= merged.loyaltyTransactions || [];
-    merged.priceHistory       = merged.priceHistory || [];
-    merged.bulkDiscountTiers  = merged.bulkDiscountTiers || def.bulkDiscountTiers;
-    // patch customers for new fields
-    merged.customers = merged.customers.map(c=>({
-      loyaltyPoints:0, customerType:'retail', notes:'', ...c
-    }));
-    merged.products = merged.products.map(p=>({ barcode:'', ...p }));
-    return merged;
-  } catch {
-    return defaultState();
-  }
-}
-function saveState() {
-  try { localStorage.setItem(DB_KEY, JSON.stringify(STATE)); } catch (e) { console.warn('Save failed', e); }
-}
-
-let STATE = loadState();
-setInterval(saveState, 30000);
+// NOTE: window.STATE is intentionally NOT exposed.
+// If you need to debug in DevTools, temporarily set window._debug_STATE = STATE
+// inside loadAllData() and remove it before going to production.
 
 /* ════════════════════════════════════════════════════════════════
    2.  UTILITIES
    ════════════════════════════════════════════════════════════════ */
 const $ = (sel, ctx = document) => ctx.querySelector(sel);
 const $$ = (sel, ctx = document) => [...ctx.querySelectorAll(sel)];
-const sym = () => STATE.settings.currency;
-const fmt = n => sym() + Number(n || 0).toLocaleString('en-NG', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-const fmtNum = n => Number(n || 0).toLocaleString('en-NG');
-const uid = () => Math.random().toString(36).slice(2, 10).toUpperCase();
+const sym   = () => STATE.settings.currency || '₦';
+const fmt   = n  => sym() + Number(n || 0).toLocaleString('en-NG', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const fmtNum= n  => Number(n || 0).toLocaleString('en-NG');
+const uid   = () => Math.random().toString(36).slice(2, 10).toUpperCase();
 const today = () => new Date().toISOString().split('T')[0];
-const nowISO = () => new Date().toISOString();
-const fmtDate = iso => iso ? new Date(iso).toLocaleDateString('en-NG', { day:'2-digit', month:'short', year:'numeric' }) : '—';
-const fmtPct = n => Number(n||0).toFixed(1) + '%';
+const nowISO= () => new Date().toISOString();
+const fmtDate = iso => iso ? new Date(iso).toLocaleDateString('en-NG', { day: '2-digit', month: 'short', year: 'numeric' }) : '—';
+const fmtPct  = n  => Number(n || 0).toFixed(1) + '%';
+const el = id => document.getElementById(id);
 
 function totalStock(product) {
   return Object.values(product.stock || {}).reduce((a, b) => a + b, 0);
 }
 function getWarehouseName(id) {
-  const w = STATE.warehouses.find(x => x.id === id);
-  return w ? w.name : id;
+  return STATE.warehouses.find(x => x.id === id)?.name || id;
 }
 
-/* ── BULK DISCOUNT ENGINE ─────────────────────────────────────── */
-/**
- * Given a productId and a quantity, returns the applicable bulk discount %.
- * Checks active tiers; tiers with productIds [] apply to all products.
- */
+/* ── Number generators — always update DB counter after use ── */
+function nextNo(field, prefix) {
+  const n = STATE.settings[field]++;
+  API.updateSettings({ [field]: STATE.settings[field] }).catch(() => {});
+  return `${STATE.settings[prefix]}-${String(n).padStart(5, '0')}`;
+}
+const nextReceiptNo    = () => nextNo('nextReceiptNo',    'receiptPrefix');
+const nextInvoiceNo    = () => nextNo('nextInvoiceNo',    'invoicePrefix');
+const nextQuoteNo      = () => nextNo('nextQuoteNo',      'quotePrefix');
+const nextCreditNoteNo = () => nextNo('nextCreditNoteNo', 'creditNotePrefix');
+const nextPurchaseNo   = () => nextNo('nextPurchaseNo',   'receiptPrefix');
+
+/* ── Bulk discount helpers ── */
 function getBulkDiscount(productId, qty) {
   if (!STATE.settings.enableBulkDiscount) return 0;
-  const applicable = STATE.bulkDiscountTiers
-    .filter(t => t.active &&
-      qty >= t.minQty && qty <= t.maxQty &&
-      (t.productIds.length === 0 || t.productIds.includes(productId))
-    )
+  const hits = STATE.bulkDiscountTiers
+    .filter(t => t.active && qty >= t.minQty && qty <= (t.maxQty ?? 99999) &&
+      (!t.productIds?.length || t.productIds.includes(productId)))
     .sort((a, b) => b.discountPct - a.discountPct);
-  return applicable.length ? applicable[0].discountPct : 0;
+  return hits[0]?.discountPct || 0;
 }
-
-/**
- * Returns the NEXT tier above current qty (for upsell prompt).
- */
 function getNextBulkTier(productId, qty) {
   if (!STATE.settings.enableBulkDiscount) return null;
-  const next = STATE.bulkDiscountTiers
-    .filter(t => t.active &&
-      t.minQty > qty &&
-      (t.productIds.length === 0 || t.productIds.includes(productId))
-    )
-    .sort((a, b) => a.minQty - b.minQty);
-  return next.length ? next[0] : null;
+  return STATE.bulkDiscountTiers
+    .filter(t => t.active && t.minQty > qty &&
+      (!t.productIds?.length || t.productIds.includes(productId)))
+    .sort((a, b) => a.minQty - b.minQty)[0] || null;
 }
+
+/* ── Loading overlay ── */
+function showLoading(msg = 'Loading…') {
+  let ov = document.getElementById('db-loading');
+  if (!ov) {
+    ov = document.createElement('div');
+    ov.id = 'db-loading';
+    ov.style.cssText = `position:fixed;inset:0;background:rgba(255,255,255,.88);z-index:99999;
+      display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1rem;
+      font-size:1rem;color:#1e40af;font-weight:600;backdrop-filter:blur(3px);`;
+    ov.innerHTML = `<div style="width:40px;height:40px;border:4px solid #bfdbfe;
+      border-top-color:#2563eb;border-radius:50%;animation:spin .8s linear infinite;"></div>
+      <div id="db-loading-msg">${msg}</div>`;
+    document.body.appendChild(ov);
+  } else {
+    document.getElementById('db-loading-msg').textContent = msg;
+  }
+}
+function hideLoading() { document.getElementById('db-loading')?.remove(); }
 
 /* ── Toast ── */
 function toast(msg, type = 'info') {
@@ -147,20 +137,19 @@ function toast(msg, type = 'info') {
   const colors = { info: '#2563eb', success: '#16a34a', warn: '#d97706', error: '#dc2626' };
   const t = document.createElement('div');
   t.style.cssText = `padding:.75rem 1.25rem;border-radius:8px;color:#fff;font-size:.875rem;font-weight:500;
-    background:${colors[type]||colors.info};box-shadow:0 4px 20px rgba(0,0,0,.2);
-    opacity:0;transform:translateX(1rem);transition:all .3s;max-width:340px;`;
+    background:${colors[type] || colors.info};box-shadow:0 4px 20px rgba(0,0,0,.2);
+    opacity:0;transform:translateX(1rem);transition:all .3s;max-width:360px;`;
   t.textContent = msg;
   wrap.append(t);
-  requestAnimationFrame(() => { t.style.opacity='1'; t.style.transform='none'; });
-  setTimeout(() => { t.style.opacity='0'; t.style.transform='translateX(1rem)'; setTimeout(()=>t.remove(),320); }, 4200);
+  requestAnimationFrame(() => { t.style.opacity = '1'; t.style.transform = 'none'; });
+  setTimeout(() => { t.style.opacity = '0'; t.style.transform = 'translateX(1rem)'; setTimeout(() => t.remove(), 320); }, 4200);
 }
 
 function confirm2(msg) { return window.confirm(msg); }
 
 /* ── Modal ── */
-function modal(title, bodyHTML, onSave, saveLabel='Save', width='580px') {
-  const existing = $('#app-modal');
-  if (existing) existing.remove();
+function modal(title, bodyHTML, onSave, saveLabel = 'Save', width = '580px') {
+  $('#app-modal')?.remove();
   const overlay = document.createElement('div');
   overlay.id = 'app-modal';
   overlay.style.cssText = `position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:9000;
@@ -170,8 +159,7 @@ function modal(title, bodyHTML, onSave, saveLabel='Save', width='580px') {
       max-height:90vh;overflow-y:auto;box-shadow:0 25px 80px rgba(0,0,0,.3);animation:modalIn .25s ease;">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1.5rem;">
         <h3 style="margin:0;font-size:1.25rem;color:#1f2937;">${title}</h3>
-        <button id="modal-x" style="background:none;border:none;font-size:1.5rem;cursor:pointer;
-          color:#6b7280;line-height:1;padding:.2rem .5rem;border-radius:6px;">×</button>
+        <button id="modal-x" style="background:none;border:none;font-size:1.5rem;cursor:pointer;color:#6b7280;padding:.2rem .5rem;">×</button>
       </div>
       <div id="modal-body">${bodyHTML}</div>
       <div style="display:flex;gap:.75rem;justify-content:flex-end;margin-top:1.75rem;padding-top:1rem;border-top:1px solid #e5e7eb;">
@@ -183,66 +171,373 @@ function modal(title, bodyHTML, onSave, saveLabel='Save', width='580px') {
   const close = () => overlay.remove();
   $('#modal-x', overlay).onclick = close;
   $('#modal-cancel', overlay).onclick = close;
-  overlay.onclick = e => { if(e.target===overlay) close(); };
-  if (onSave) $('#modal-save', overlay).onclick = () => onSave(overlay, close);
+  overlay.onclick = e => { if (e.target === overlay) close(); };
+  if (onSave) {
+    const btn = $('#modal-save', overlay);
+    btn.onclick = async () => {
+      btn.disabled = true; btn.textContent = 'Saving…';
+      try { await onSave(overlay, close); }
+      catch (err) { console.error('[Modal]', err); toast('Save failed: ' + err.message, 'error'); }
+      finally { if (btn.isConnected) { btn.disabled = false; btn.textContent = saveLabel; } }
+    };
+  }
 }
 
-/* ── Number Generators ── */
-function nextInvoiceNo()   { const n=STATE.settings.nextInvoiceNo++;   saveState(); return `${STATE.settings.invoicePrefix}-${String(n).padStart(5,'0')}`; }
-function nextReceiptNo()   { const n=STATE.settings.nextReceiptNo++;   saveState(); return `${STATE.settings.receiptPrefix}-${String(n).padStart(5,'0')}`; }
-function nextQuoteNo()     { const n=STATE.settings.nextQuoteNo++;     saveState(); return `${STATE.settings.quotePrefix}-${String(n).padStart(5,'0')}`; }
-function nextDebitNoteNo() { const n=STATE.settings.nextDebitNoteNo++; saveState(); return `${STATE.settings.debitNotePrefix}-${String(n).padStart(5,'0')}`; }
-function nextCreditNoteNo(){ const n=STATE.settings.nextCreditNoteNo++;saveState(); return `${STATE.settings.creditNotePrefix}-${String(n).padStart(5,'0')}`; }
+/* ════════════════════════════════════════════════════════════════
+   3.  DATA LOADING — maps DB shapes to STATE
+       All data comes from the API. STATE is rebuilt on each load.
+   ════════════════════════════════════════════════════════════════ */
+
+const mapWarehouse = s => ({
+  id: s.id, name: s.name || '',
+  location: s.location || '', manager: s.manager || '',
+  description: s.description || '',
+});
+
+const mapProduct = s => {
+  const flatStock = parseInt(s.stock) || 0;
+  const stock = {};
+  if (STATE.warehouses.length) {
+    STATE.warehouses.forEach((w, i) => { stock[w.id] = i === 0 ? flatStock : 0; });
+  } else {
+    stock['__default__'] = flatStock;
+  }
+  return {
+    id: s.id, name: s.name || '', sku: s.sku || '',
+    barcode: s.barcode || '', description: s.description || '',
+    sellingPrice: parseFloat(s.price) || 0,
+    costPrice: parseFloat(s.costPrice) || 0,
+    unit: s.unit || '', active: s.active !== false,
+    reorderLevel: parseInt(s.lowStockThreshold) || 10,
+    category: s.category?.name || s.category || '',
+    categoryId: s.categoryId || null,
+    supplierId: s.supplierId || '',
+    warehouseId: s.warehouseId || '',
+    stock,
+  };
+};
+
+const mapCustomer = s => ({
+  id: s.id, name: s.name || '',
+  email: s.email || '', phone: s.phone || '', address: s.address || '',
+  customerType: s.customerType || 'retail',
+  creditLimit: parseFloat(s.creditLimit) || 0,
+  loyaltyPoints: parseInt(s.loyaltyPoints) || 0,
+  balance: parseFloat(s.balance) || 0,
+  totalPurchases: parseFloat(s.totalPurchases) || 0,
+  notes: s.notes || '',
+});
+
+const mapSupplier = s => ({
+  id: s.id, name: s.name || '',
+  email: s.email || '', phone: s.phone || '', address: s.address || '',
+  contactPerson: s.contactPerson || '',
+  notes: s.notes || '',
+  balance: parseFloat(s.balance) || 0,
+});
+
+const mapSalesRep = s => ({
+  id: s.id, name: s.name || '',
+  email: s.email || '', phone: s.phone || '',
+  warehouseId: s.warehouseId || '',
+  commission: parseFloat(s.commission) || 2,
+  totalSales: parseFloat(s.totalSales) || 0,
+  active: s.active !== false,
+});
+
+const mapSaleItem = i => ({
+  productId: i.productId,
+  name: i.product?.name || i.name || '',
+  unit: i.product?.unit || i.unit || '',
+  qty: parseInt(i.qty) || 0,
+  unitPrice: parseFloat(i.price) || 0,
+  costPrice: parseFloat(i.product?.costPrice || i.costPrice) || 0,
+  discount: parseFloat(i.discount) || 0,
+  lineDiscount: parseFloat(i.discount) || 0,
+  total: parseFloat(i.total) || 0,
+  bulkDiscountPct: 0, manualDiscountPct: 0, effectiveDiscountPct: 0,
+});
+
+const mapSale = s => ({
+  id: s.id,
+  receiptNo: s.receiptNo || null,
+  invoiceNo: s.invoiceNo || null,
+  customerId: s.customerId || '',
+  customerName: s.customer?.name || 'Walk-in',
+  repId: s.repId || '',
+  repName: '',
+  warehouseId: s.warehouseId || '',
+  items: (s.items || []).map(mapSaleItem),
+  subtotal: parseFloat(s.subtotal) || 0,
+  totalDiscountAmt: parseFloat(s.discount) || 0,
+  taxAmt: parseFloat(s.tax) || 0,
+  total: parseFloat(s.total) || 0,
+  paymentMethod: (s.paymentMethod || 'cash').toLowerCase(),
+  paymentStatus: s.paymentStatus || 'paid',
+  redeemPts: parseInt(s.pointsRedeemed) || 0,
+  redeemVal: 0,
+  date: s.createdAt || nowISO(),
+  notes: s.note || '',
+  type: s.type || undefined,
+});
+
+const mapPurchase = s => ({
+  id: s.id,
+  invoiceNo: s.purchaseNo || '',
+  supplierId: s.supplierId || '',
+  supplierName: s.supplier?.name || '',
+  warehouseId: s.warehouseId || '',
+  warehouseName: s.warehouse?.name || '',
+  items: (s.items || []).map(i => ({
+    productId: i.productId,
+    name: i.product?.name || '',
+    unit: i.product?.unit || '',
+    qty: parseInt(i.qty) || 0,
+    cost: parseFloat(i.costPrice) || 0,
+  })),
+  grandTotal: parseFloat(s.total) || 0,
+  paidAmt: parseFloat(s.paidAmount) || 0,
+  owed: Math.max(0, (parseFloat(s.total) || 0) - (parseFloat(s.paidAmount) || 0)),
+  paymentStatus: (parseFloat(s.paidAmount) || 0) >= (parseFloat(s.total) || 0) ? 'paid'
+    : (parseFloat(s.paidAmount) || 0) > 0 ? 'partial' : 'credit',
+  notes: s.note || s.notes || '',
+  date: s.createdAt || nowISO(),
+});
+
+const mapExpense = s => ({
+  id: s.id,
+  category: s.category || '',
+  description: s.description || s.title || '',
+  title: s.title || s.description || '',
+  amount: parseFloat(s.amount) || 0,
+  paidBy: s.paidBy || '',
+  date: s.date || s.createdAt || nowISO(),
+  notes: s.note || '',
+});
+
+const mapQuote = s => ({
+  id: s.id,
+  quoteNo: s.quoteNo || '',
+  customerId: s.customerId || '',
+  customerName: s.customer?.name || 'Walk-in',
+  items: (s.items || []).map(i => ({
+    productId: i.productId,
+    name: i.product?.name || '',
+    unit: i.product?.unit || '',
+    qty: parseInt(i.qty) || 0,
+    unitPrice: parseFloat(i.price) || 0,
+    discount: parseFloat(i.discount) || 0,
+    effectiveDiscountPct: parseFloat(i.discount) || 0,
+    total: parseFloat(i.total) || 0,
+  })),
+  subtotal: parseFloat(s.subtotal) || 0,
+  extraDiscPct: parseFloat(s.discount) || 0,
+  taxAmt: parseFloat(s.tax) || 0,
+  total: parseFloat(s.total) || 0,
+  validDays: s.validUntil
+    ? Math.ceil((new Date(s.validUntil) - new Date(s.createdAt)) / 86400000)
+    : 7,
+  status: (s.status || 'PENDING').toLowerCase(),
+  date: s.createdAt || nowISO(),
+  notes: s.note || '',
+});
+
+const mapCreditNote = s => ({
+  id: s.id,
+  creditNoteNo: s.creditNo || '',
+  originalInvoiceNo: s.sale?.invoiceNo || s.saleId || '',
+  customerId: s.customerId || '',
+  customerName: s.customer?.name || '',
+  amount: parseFloat(s.amount) || 0,
+  reason: s.reason || '',
+  notes: '',
+  date: s.createdAt || nowISO(),
+  status: 'issued',
+});
+
+const mapDiscountTier = s => ({
+  id: s.id,
+  name: s.name || '',
+  discountPct: parseFloat(s.discountPct) || 0,
+  minQty: parseInt(s.minQty) || 0,
+  maxQty: s.maxQty != null ? parseInt(s.maxQty) : 99999,
+  productIds: s.productIds || [],
+  active: Boolean(s.active),
+});
+
+const mapSettings = s => {
+  if (!s) return {};
+  const map = {
+    companyName: s.companyName, address: s.address, phone: s.phone,
+    email: s.email, currency: s.currency, taxRate: s.taxRate,
+    lowStockThreshold: s.lowStockThreshold,
+    invoicePrefix: s.invoicePrefix, receiptPrefix: s.receiptPrefix,
+    quotePrefix: s.quotePrefix, creditNotePrefix: s.creditNotePrefix,
+    enableBulkDiscount: s.enableBulkDiscount,
+    loyaltyPointsRate: s.loyaltyPointsRate,
+    loyaltyRedemptionRate: s.loyaltyRedemptionRate,
+    nextInvoiceNo: s.nextInvoiceNo, nextReceiptNo: s.nextReceiptNo,
+    nextQuoteNo: s.nextQuoteNo, nextCreditNoteNo: s.nextCreditNoteNo,
+    nextPurchaseNo: s.nextPurchaseNo,
+  };
+  const out = {};
+  Object.entries(map).forEach(([k, v]) => { if (v !== undefined && v !== null) out[k] = v; });
+  return out;
+};
+
+/* ── Extract array from various server response shapes ── */
+function arr(data, ...keys) {
+  for (const k of keys) if (Array.isArray(data?.[k])) return data[k];
+  if (Array.isArray(data)) return data;
+  return null;
+}
+
+/* ── Sync status pill ── */
+function setSyncStatus(state) {
+  let dot = document.getElementById('sync-dot');
+  if (!dot) {
+    dot = document.createElement('div');
+    dot.id = 'sync-dot';
+    dot.style.cssText = `position:fixed;top:.65rem;left:50%;transform:translateX(-50%);
+      z-index:99997;border-radius:20px;padding:.28rem .85rem;font-size:.73rem;font-weight:700;
+      display:flex;align-items:center;gap:.4rem;pointer-events:none;transition:opacity .4s;`;
+    document.body.appendChild(dot);
+  }
+  const cfg = {
+    syncing: { bg: '#2563eb', fg: '#fff',    ic: '⟳', lb: 'Syncing…'     },
+    ok:      { bg: '#d1fae5', fg: '#065f46', ic: '✓', lb: 'DB Connected'  },
+    error:   { bg: '#fee2e2', fg: '#991b1b', ic: '✕', lb: 'DB Error'      },
+  };
+  const c = cfg[state] || cfg.error;
+  dot.style.background = c.bg; dot.style.color = c.fg; dot.style.opacity = '1';
+  dot.innerHTML = `<span>${c.ic}</span><span>${c.lb}</span>`;
+  if (state === 'ok') setTimeout(() => { dot.style.opacity = '0'; }, 3000);
+}
+
+/* ── Master data loader — fetches everything fresh from the DB ── */
+async function loadAllData() {
+  setSyncStatus('syncing');
+  try {
+    let d = null;
+    try {
+      const raw = await API.fetchAll();
+      d = raw?.data?.warehouses  ? raw.data
+        : raw?.warehouses        ? raw
+        : raw?.data              ? raw.data
+        : raw;
+    } catch (e) {
+      console.warn('[Data] /sync/all unavailable, fetching individually:', e.message);
+    }
+
+    const hasBulk = d && (d.warehouses || d.products || d.customers || d.sales);
+
+    if (!hasBulk) {
+      const [r1,r2,r3,r4,r5,r6,r7,r8,r9,r10,r11,r12] = await Promise.allSettled([
+        API.getWarehouses(), API.getProducts(), API.getCustomers(),
+        API.getSuppliers(),  API.getSalesReps(), API.getSales(),
+        API.getPurchases(),  API.getExpenses(),  API.getQuotes(),
+        API.getCreditNotes(), API.getDiscountTiers(), API.getSettings(),
+      ]);
+      const v = r => r.status === 'fulfilled' ? r.value : null;
+      d = {
+        warehouses:       arr(v(r1),  'warehouses')   || v(r1)  || [],
+        products:         arr(v(r2),  'products')     || v(r2)  || [],
+        customers:        arr(v(r3),  'customers')    || v(r3)  || [],
+        suppliers:        arr(v(r4),  'suppliers')    || v(r4)  || [],
+        salesReps:        arr(v(r5),  'salesReps','sales_reps') || v(r5) || [],
+        sales:            arr(v(r6),  'sales')        || v(r6)  || [],
+        purchases:        arr(v(r7),  'purchases')    || v(r7)  || [],
+        expenses:         arr(v(r8),  'expenses')     || v(r8)  || [],
+        quotes:           arr(v(r9),  'quotes')       || v(r9)  || [],
+        creditNotes:      arr(v(r10), 'creditNotes')  || v(r10) || [],
+        bulkDiscountTiers:arr(v(r11), 'bulkDiscountTiers','discountTiers','tiers') || v(r11) || [],
+        settings:         v(r12)?.settings || v(r12)  || null,
+      };
+    }
+
+    // Warehouses must be mapped first (products depend on warehouse list)
+    const whs = arr(d, 'warehouses');
+    if (whs) STATE.warehouses = whs.map(mapWarehouse);
+
+    const prods = arr(d, 'products');
+    if (prods) STATE.products = prods.map(mapProduct);
+
+    const custs = arr(d, 'customers');
+    if (custs) STATE.customers = custs.map(mapCustomer);
+
+    const sups = arr(d, 'suppliers');
+    if (sups) STATE.suppliers = sups.map(mapSupplier);
+
+    const reps = arr(d, 'salesReps', 'sales_reps', 'reps');
+    if (reps) STATE.salesReps = reps.map(mapSalesRep);
+
+    const sales = arr(d, 'sales');
+    if (sales) STATE.sales = sales.map(mapSale);
+
+    const purs = arr(d, 'purchases');
+    if (purs) STATE.purchases = purs.map(mapPurchase);
+
+    const exps = arr(d, 'expenses');
+    if (exps) STATE.expenses = exps.map(mapExpense);
+
+    const qts = arr(d, 'quotes');
+    if (qts) STATE.quotes = qts.map(mapQuote);
+
+    const cns = arr(d, 'creditNotes', 'credit_notes');
+    if (cns) STATE.creditNotes = cns.map(mapCreditNote);
+
+    const tiers = arr(d, 'bulkDiscountTiers', 'discountTiers', 'tiers', 'discount_tiers');
+    if (tiers) STATE.bulkDiscountTiers = tiers.map(mapDiscountTier);
+
+    const sett = d.settings || (d.id === 'global' ? d : null);
+    if (sett) STATE.settings = { ...STATE.settings, ...mapSettings(sett) };
+
+    setSyncStatus('ok');
+  } catch (err) {
+    console.error('[Data] loadAllData failed:', err);
+    setSyncStatus('error');
+    toast('Could not load data: ' + err.message, 'error');
+  }
+}
+
+async function refreshSection(id) {
+  await loadAllData();
+  renderSection(id);
+}
 
 /* ════════════════════════════════════════════════════════════════
-   3.  NAVIGATION
+   4.  NAVIGATION
    ════════════════════════════════════════════════════════════════ */
-function showSection(id) {
+const RENDERS = {};
+
+async function showSection(id) {
   $$('section').forEach(s => s.classList.remove('active'));
   $$('.sidebar a').forEach(a => a.classList.remove('active'));
-  const sec = document.getElementById(id);
-  if (sec) sec.classList.add('active');
-  const link = $(`.sidebar a[href="#${id}"]`);
-  if (link) link.classList.add('active');
-  const renders = {
-    dashboard:       renderDashboard,
-    warehouse:       renderWarehouses,
-    products:        renderProducts,
-    pos:             renderPOS,
-    customers:       renderCustomers,
-    suppliers:       renderSuppliers,
-    'sales-reps':    renderSalesReps,
-    purchases:       renderPurchases,
-    invoices:        renderInvoices,
-    quotes:          renderQuotes,
-    'bulk-discounts':renderBulkDiscounts,
-    'credit-notes':  renderCreditNotes,
-    expenses:        renderExpenses,
-    reports:         renderReports,
-    settings:        renderSettings,
-  };
-  if (renders[id]) renders[id]();
+  document.getElementById(id)?.classList.add('active');
+  $(`.sidebar a[href="#${id}"]`)?.classList.add('active');
+  await loadAllData();
+  renderSection(id);
+}
+
+function renderSection(id) {
+  RENDERS[id]?.();
 }
 
 /* ════════════════════════════════════════════════════════════════
-   4.  DASHBOARD
+   5.  DASHBOARD
    ════════════════════════════════════════════════════════════════ */
 function renderDashboard() {
-  if (!el('todaySales')) return; // guard: DOM not ready yet
-
-  const todayStr = today();
-  const todaySales = STATE.sales.filter(s=>s.date&&s.date.startsWith(todayStr))
-    .reduce((sum,s)=>sum+(s.total||0),0);
-  const lowStock = STATE.products.filter(p=>totalStock(p)<=(p.reorderLevel||STATE.settings.lowStockThreshold));
-  const receivables = STATE.customers.reduce((sum,c)=>sum+(c.balance||0),0);
-  const thisMonth = new Date().toISOString().slice(0,7);
-  const monthRevenue = STATE.sales.filter(s=>s.date&&s.date.startsWith(thisMonth))
-    .reduce((sum,s)=>sum+(s.total||0),0);
-  const inventoryValue = STATE.products.reduce((sum,p)=>sum+totalStock(p)*(p.costPrice||0),0);
-  const payables = STATE.suppliers.reduce((sum,s)=>sum+(s.balance||0),0);
-  const todayExpenses = STATE.expenses.filter(e=>e.date&&e.date.startsWith(todayStr))
-    .reduce((sum,e)=>sum+(e.amount||0),0);
-  const pendingQuotes = STATE.quotes.filter(q=>q.status==='pending').length;
+  if (!el('todaySales')) return;
+  const tStr = today();
+  const todaySales = STATE.sales.filter(s => s.date?.startsWith(tStr)).reduce((a, s) => a + s.total, 0);
+  const lowStock   = STATE.products.filter(p => totalStock(p) <= (p.reorderLevel || STATE.settings.lowStockThreshold));
+  const receivables= STATE.customers.reduce((a, c) => a + (c.balance || 0), 0);
+  const mth        = new Date().toISOString().slice(0, 7);
+  const monthRev   = STATE.sales.filter(s => s.date?.startsWith(mth)).reduce((a, s) => a + s.total, 0);
+  const invValue   = STATE.products.reduce((a, p) => a + totalStock(p) * p.costPrice, 0);
+  const payables   = STATE.suppliers.reduce((a, s) => a + (s.balance || 0), 0);
+  const todayExp   = STATE.expenses.filter(e => (e.date || '').startsWith(tStr)).reduce((a, e) => a + e.amount, 0);
+  const pendQ      = STATE.quotes.filter(q => q.status === 'pending').length;
 
   el('todaySales').textContent    = fmtNum(todaySales.toFixed(2));
   el('lowStockCount').textContent = lowStock.length;
@@ -250,117 +545,60 @@ function renderDashboard() {
   el('totalDebt').textContent     = fmtNum(receivables.toFixed(2));
 
   const ext = $('#dashboard-extended');
-  if (ext) {
-    ext.innerHTML = `
-      <div class="stats-grid" style="margin-top:1.5rem;">
-        <div class="stat-card" style="border-left:5px solid #8b5cf6;">
-          <h3>Monthly Revenue</h3>
-          <div class="value">${fmt(monthRevenue)}</div>
-          <div style="font-size:.8rem;color:#64748b;margin-top:.5rem;">${new Date().toLocaleString('en-NG',{month:'long',year:'numeric'})}</div>
-        </div>
-        <div class="stat-card" style="border-left:5px solid #06b6d4;">
-          <h3>Inventory Value</h3>
-          <div class="value">${fmt(inventoryValue)}</div>
-          <div style="font-size:.8rem;color:#64748b;margin-top:.5rem;">${STATE.products.length} products</div>
-        </div>
-        <div class="stat-card" style="border-left:5px solid #f43f5e;">
-          <h3>Supplier Payables</h3>
-          <div class="value">${fmt(payables)}</div>
-          <div style="font-size:.8rem;color:#64748b;margin-top:.5rem;">${STATE.suppliers.filter(s=>s.balance>0).length} outstanding</div>
-        </div>
-        <div class="stat-card" style="border-left:5px solid #10b981;">
-          <h3>All-Time Sales</h3>
-          <div class="value">${fmt(STATE.sales.reduce((a,s)=>a+(s.total||0),0))}</div>
-          <div style="font-size:.8rem;color:#64748b;margin-top:.5rem;">${STATE.sales.length} transactions</div>
-        </div>
-        <div class="stat-card" style="border-left:5px solid #f59e0b;">
-          <h3>Today's Expenses</h3>
-          <div class="value">${fmt(todayExpenses)}</div>
-          <div style="font-size:.8rem;color:#64748b;margin-top:.5rem;">Net: ${fmt(todaySales - todayExpenses)}</div>
-        </div>
-        <div class="stat-card" style="border-left:5px solid #0891b2;">
-          <h3>Pending Quotes</h3>
-          <div class="value">${pendingQuotes}</div>
-          <div style="font-size:.8rem;color:#64748b;margin-top:.5rem;">
-            <a href="#quotes" onclick="showSection('quotes')" style="color:#0891b2;">View all quotes →</a>
-          </div>
-        </div>
+  if (!ext) return;
+  ext.innerHTML = `
+    <div class="stats-grid" style="margin-top:1.5rem;">
+      <div class="stat-card" style="border-left:5px solid #8b5cf6;"><h3>Monthly Revenue</h3>
+        <div class="value">${fmt(monthRev)}</div>
+        <div style="font-size:.8rem;color:#64748b;">${new Date().toLocaleString('en-NG',{month:'long',year:'numeric'})}</div>
       </div>
-
-      ${lowStock.length ? `
-        <div class="card" style="margin-top:1.5rem;border-left:4px solid #f59e0b;">
-          <h3 style="color:#92400e;margin-bottom:1rem;">⚠ Low Stock Alerts (${lowStock.length})</h3>
-          <table>
-            <thead><tr><th>Product</th><th>Total Stock</th><th>Reorder Level</th><th>Est. Days Left</th><th>Action</th></tr></thead>
-            <tbody>${lowStock.map(p=>{
-              const avgDaily = calcAvgDailySales(p.id);
-              const daysLeft = avgDaily > 0 ? Math.floor(totalStock(p)/avgDaily) : '—';
-              return `<tr>
-                <td>${p.name}</td>
-                <td style="color:#dc2626;font-weight:700;">${totalStock(p)} ${p.unit}</td>
-                <td>${p.reorderLevel||STATE.settings.lowStockThreshold}</td>
-                <td>${typeof daysLeft==='number' ? daysLeft+' days' : daysLeft}</td>
-                <td><button onclick="showSection('purchases')" style="font-size:.8rem;padding:.3rem .7rem;">Reorder</button></td>
-              </tr>`;
-            }).join('')}
-            </tbody>
-          </table>
-        </div>` : ''}
-
-      <div class="card" style="margin-top:1.5rem;">
-        <h3 style="margin-bottom:1rem;">Active Bulk Discount Tiers</h3>
-        <div style="display:flex;gap:.75rem;flex-wrap:wrap;">
-          ${STATE.bulkDiscountTiers.filter(t=>t.active).map(t=>`
-            <div style="background:linear-gradient(135deg,#1e40af,#2563eb);color:#fff;border-radius:10px;
-              padding:.75rem 1.25rem;font-size:.875rem;min-width:140px;">
-              <div style="font-weight:700;font-size:1rem;">${t.discountPct}% OFF</div>
-              <div style="opacity:.85;margin-top:.25rem;">${t.name}</div>
-              <div style="opacity:.7;font-size:.78rem;margin-top:.2rem;">
-                ${t.minQty}${t.maxQty<99999?'–'+t.maxQty:'+'} units
-              </div>
-            </div>`).join('')}
-        </div>
-        <p style="font-size:.8rem;color:#64748b;margin-top:.75rem;">
-          These are applied automatically at POS when item quantities meet the threshold.
-          <a href="#bulk-discounts" onclick="showSection('bulk-discounts')" style="color:#2563eb;">Manage tiers →</a>
-        </p>
+      <div class="stat-card" style="border-left:5px solid #06b6d4;"><h3>Inventory Value</h3>
+        <div class="value">${fmt(invValue)}</div>
+        <div style="font-size:.8rem;color:#64748b;">${STATE.products.length} products</div>
       </div>
-
-      <div class="card" style="margin-top:1.5rem;">
-        <h3 style="margin-bottom:1rem;">Recent Sales</h3>
-        ${STATE.sales.length ? `
-          <table>
-            <thead><tr><th>Receipt/Invoice</th><th>Customer</th><th>Date</th><th>Total</th><th>Discount</th><th>Status</th></tr></thead>
-            <tbody>${STATE.sales.slice(-10).reverse().map(s=>`
-              <tr>
-                <td style="font-family:monospace;">${s.receiptNo||s.invoiceNo||'—'}</td>
-                <td>${s.customerName||'Walk-in'}</td>
-                <td>${fmtDate(s.date)}</td>
-                <td>${fmt(s.total)}</td>
-                <td>${(s.totalDiscountAmt||0)>0?fmt(s.totalDiscountAmt):'—'}</td>
-                <td><span class="badge badge-${s.paymentStatus==='paid'?'green':'yellow'}">${s.paymentStatus||'paid'}</span></td>
-              </tr>`).join('')}
-            </tbody>
-          </table>` : '<p style="color:#9ca3af;text-align:center;padding:2rem;">No sales yet.</p>'}
-      </div>`;
-  }
-}
-
-function el(id) { return document.getElementById(id); }
-
-function calcAvgDailySales(productId) {
-  const last30 = new Date(); last30.setDate(last30.getDate()-30);
-  let total = 0;
-  STATE.sales.forEach(s=>{
-    if(new Date(s.date)>=last30) {
-      s.items.forEach(i=>{ if(i.productId===productId) total+=i.qty; });
-    }
-  });
-  return total/30;
+      <div class="stat-card" style="border-left:5px solid #f43f5e;"><h3>Supplier Payables</h3>
+        <div class="value">${fmt(payables)}</div>
+        <div style="font-size:.8rem;color:#64748b;">${STATE.suppliers.filter(s=>s.balance>0).length} outstanding</div>
+      </div>
+      <div class="stat-card" style="border-left:5px solid #10b981;"><h3>All-Time Sales</h3>
+        <div class="value">${fmt(STATE.sales.reduce((a,s)=>a+s.total,0))}</div>
+        <div style="font-size:.8rem;color:#64748b;">${STATE.sales.length} transactions</div>
+      </div>
+      <div class="stat-card" style="border-left:5px solid #f59e0b;"><h3>Today's Expenses</h3>
+        <div class="value">${fmt(todayExp)}</div>
+        <div style="font-size:.8rem;color:#64748b;">Net: ${fmt(todaySales - todayExp)}</div>
+      </div>
+      <div class="stat-card" style="border-left:5px solid #0891b2;"><h3>Pending Quotes</h3>
+        <div class="value">${pendQ}</div>
+        <div style="font-size:.8rem;"><a href="#quotes" onclick="showSection('quotes')" style="color:#0891b2;">View →</a></div>
+      </div>
+    </div>
+    ${lowStock.length ? `
+      <div class="card" style="margin-top:1.5rem;border-left:4px solid #f59e0b;">
+        <h3 style="color:#92400e;margin-bottom:1rem;">⚠ Low Stock Alerts (${lowStock.length})</h3>
+        <table><thead><tr><th>Product</th><th>Stock</th><th>Reorder Level</th><th>Action</th></tr></thead>
+        <tbody>${lowStock.map(p=>`<tr>
+          <td>${p.name}</td>
+          <td style="color:#dc2626;font-weight:700;">${totalStock(p)} ${p.unit}</td>
+          <td>${p.reorderLevel || STATE.settings.lowStockThreshold}</td>
+          <td><button onclick="showSection('purchases')" style="font-size:.8rem;padding:.3rem .7rem;">Reorder</button></td>
+        </tr>`).join('')}</tbody></table>
+      </div>` : ''}
+    <div class="card" style="margin-top:1.5rem;">
+      <h3 style="margin-bottom:1rem;">Recent Sales</h3>
+      ${STATE.sales.length ? `
+        <table><thead><tr><th>Receipt/Invoice</th><th>Customer</th><th>Date</th><th>Total</th><th>Status</th></tr></thead>
+        <tbody>${STATE.sales.slice(-10).reverse().map(s=>`<tr>
+          <td style="font-family:monospace;">${s.receiptNo||s.invoiceNo||'—'}</td>
+          <td>${s.customerName||'Walk-in'}</td><td>${fmtDate(s.date)}</td>
+          <td>${fmt(s.total)}</td>
+          <td><span class="badge badge-${s.paymentStatus==='paid'?'green':'yellow'}">${s.paymentStatus||'paid'}</span></td>
+        </tr>`).join('')}</tbody></table>` : '<p style="color:#9ca3af;text-align:center;padding:2rem;">No sales yet.</p>'}
+    </div>`;
 }
 
 /* ════════════════════════════════════════════════════════════════
-   5.  WAREHOUSES
+   6.  WAREHOUSES
    ════════════════════════════════════════════════════════════════ */
 function renderWarehouses() {
   const sec = $('#warehouse');
@@ -375,700 +613,494 @@ function renderWarehouses() {
     <div class="card" style="margin-top:1.5rem;">
       <h3 style="margin-bottom:1rem;">Stock Transfer Between Warehouses</h3>
       ${transferFormHTML()}
-    </div>
-    <div class="card" style="margin-top:1.5rem;">
-      <h3 style="margin-bottom:1rem;">Transfer History</h3>
-      <div id="transfer-history"></div>
     </div>`;
   renderWarehouseGrid();
-  renderTransferHistory();
 }
 
 function renderWarehouseGrid() {
-  const grid = $('#wh-grid');
-  if (!grid) return;
-  grid.innerHTML = STATE.warehouses.map(w => {
-    const whProducts = STATE.products.map(p=>({...p, whStock:p.stock[w.id]||0})).filter(p=>p.whStock>0);
-    const whValue = whProducts.reduce((sum,p)=>sum+p.whStock*p.costPrice,0);
-    return `
-      <div class="stat-card" style="border-left:5px solid var(--primary);">
-        <div style="display:flex;justify-content:space-between;">
-          <h3 style="font-size:1.1rem;color:#1f2937;">${w.name}</h3>
-          <div>
-            <button onclick="editWarehouse('${w.id}')" style="font-size:.75rem;padding:.2rem .6rem;margin-right:.3rem;background:#6b7280;">Edit</button>
-            <button onclick="deleteWarehouse('${w.id}')" style="font-size:.75rem;padding:.2rem .6rem;background:#dc2626;">Del</button>
-          </div>
+  const g = $('#wh-grid'); if (!g) return;
+  g.innerHTML = STATE.warehouses.map(w => {
+    const whProds = STATE.products.filter(p => (p.stock[w.id] || 0) > 0);
+    const val = whProds.reduce((s, p) => s + (p.stock[w.id] || 0) * p.costPrice, 0);
+    return `<div class="stat-card" style="border-left:5px solid var(--primary);">
+      <div style="display:flex;justify-content:space-between;">
+        <h3 style="font-size:1.1rem;">${w.name}</h3>
+        <div>
+          <button onclick="editWarehouse('${w.id}')" style="font-size:.75rem;padding:.2rem .6rem;background:#6b7280;margin-right:.3rem;">Edit</button>
+          <button onclick="deleteWarehouse('${w.id}')" style="font-size:.75rem;padding:.2rem .6rem;background:#dc2626;">Del</button>
         </div>
-        <p style="color:#64748b;font-size:.85rem;margin:.3rem 0;">📍 ${w.location} &nbsp;|&nbsp; 👤 ${w.manager}</p>
-        <div class="value" style="font-size:1.5rem;">${fmt(whValue)}</div>
-        <p style="font-size:.8rem;color:#64748b;">${whProducts.length} product lines in stock</p>
-      </div>`;
-  }).join('') || '<p style="color:#9ca3af;">No warehouses. Add one above.</p>';
+      </div>
+      <p style="color:#64748b;font-size:.85rem;margin:.3rem 0;">📍 ${w.location} &nbsp;|&nbsp; 👤 ${w.manager}</p>
+      <div class="value" style="font-size:1.5rem;">${fmt(val)}</div>
+      <p style="font-size:.8rem;color:#64748b;">${whProds.length} product lines in stock</p>
+    </div>`;
+  }).join('') || '<p style="color:#9ca3af;">No warehouses yet.</p>';
 }
 
 function transferFormHTML() {
-  const prodOpts = STATE.products.map(p=>`<option value="${p.id}">${p.name} (${p.sku})</option>`).join('');
-  const whOpts = STATE.warehouses.map(w=>`<option value="${w.id}">${w.name}</option>`).join('');
+  const po = STATE.products.map(p => `<option value="${p.id}">${p.name}</option>`).join('');
+  const wo = STATE.warehouses.map(w => `<option value="${w.id}">${w.name}</option>`).join('');
   return `
     <div class="form-grid">
-      <div><label>Product</label><select id="tf-product" style="width:100%;">${prodOpts}</select></div>
-      <div><label>From Warehouse</label><select id="tf-from" style="width:100%;">${whOpts}</select></div>
-      <div><label>To Warehouse</label><select id="tf-to" style="width:100%;">${whOpts}</select></div>
-      <div><label>Quantity</label><input id="tf-qty" type="number" min="1" placeholder="Qty" style="width:100%;"></div>
-      <div><label>Note (optional)</label><input id="tf-note" type="text" placeholder="Reason…" style="width:100%;"></div>
+      <div><label>Product</label><select id="tf-product" style="width:100%;">${po}</select></div>
+      <div><label>From Warehouse</label><select id="tf-from" style="width:100%;">${wo}</select></div>
+      <div><label>To Warehouse</label><select id="tf-to" style="width:100%;">${wo}</select></div>
+      <div><label>Quantity</label><input id="tf-qty" type="number" min="1" style="width:100%;"></div>
+      <div><label>Note</label><input id="tf-note" style="width:100%;"></div>
     </div>
     <button onclick="doTransfer()">Transfer Stock</button>`;
 }
 
-function doTransfer() {
-  const pid=($('#tf-product').value), from=($('#tf-from').value), to=($('#tf-to').value);
-  const qty=parseInt($('#tf-qty').value), note=($('#tf-note').value.trim());
-  if (!pid||!from||!to||!qty) return toast('Fill all transfer fields.','warn');
-  if (from===to) return toast('Source and destination must differ.','warn');
-  const product=STATE.products.find(p=>p.id===pid);
+async function doTransfer() {
+  const productId = $('#tf-product').value;
+  const fromWarehouseId = $('#tf-from').value;
+  const toWarehouseId   = $('#tf-to').value;
+  const qty  = parseInt($('#tf-qty').value);
+  const note = $('#tf-note').value.trim();
+  if (!productId || !fromWarehouseId || !toWarehouseId || !qty) return toast('Fill all fields.', 'warn');
+  if (fromWarehouseId === toWarehouseId) return toast('From and To must differ.', 'warn');
+  const product = STATE.products.find(p => p.id === productId);
   if (!product) return;
-  const available=product.stock[from]||0;
-  if (qty>available) return toast(`Only ${available} ${product.unit}(s) available.`,'error');
-  product.stock[from]=available-qty;
-  product.stock[to]=(product.stock[to]||0)+qty;
-  STATE.stockTransfers.push({ id:uid(), productId:pid, productName:product.name,
-    fromId:from, toId:to, fromName:getWarehouseName(from), toName:getWarehouseName(to),
-    qty, note, date:nowISO() });
-  saveState();
-  toast(`Transferred ${qty} ${product.unit}(s) successfully.`,'success');
-  renderWarehouseGrid(); renderTransferHistory();
-}
-
-function renderTransferHistory() {
-  const div = $('#transfer-history');
-  if (!div) return;
-  if (!STATE.stockTransfers.length) { div.innerHTML='<p style="color:#9ca3af;">No transfers yet.</p>'; return; }
-  div.innerHTML = `
-    <table>
-      <thead><tr><th>Date</th><th>Product</th><th>From</th><th>To</th><th>Qty</th><th>Note</th></tr></thead>
-      <tbody>${STATE.stockTransfers.slice(-20).reverse().map(t=>`
-        <tr><td>${fmtDate(t.date)}</td><td>${t.productName}</td><td>${t.fromName}</td>
-        <td>${t.toName}</td><td>${fmtNum(t.qty)}</td><td>${t.note||'—'}</td></tr>`).join('')}
-      </tbody>
-    </table>`;
+  if (qty > (product.stock[fromWarehouseId] || 0)) return toast(`Only ${product.stock[fromWarehouseId]||0} available.`, 'error');
+  try {
+    await API.createTransfer({ productId, fromWarehouseId, toWarehouseId, qty, note });
+    toast('Stock transferred.', 'success');
+    await refreshSection('warehouse');
+  } catch (e) { toast(e.message, 'error'); }
 }
 
 function openAddWarehouse() {
-  modal('Add Warehouse',`
+  modal('Add Warehouse', `
     <div class="form-grid">
-      <div><label>Warehouse Name</label><input id="wh-name" style="width:100%;" placeholder="e.g. Branch – Umuahia"></div>
-      <div><label>Location</label><input id="wh-location" style="width:100%;" placeholder="City"></div>
-      <div><label>Manager</label><input id="wh-manager" style="width:100%;" placeholder="Manager name"></div>
-    </div>`,(overlay,close)=>{
-    const name=$('#wh-name',overlay).value.trim();
-    if(!name) return toast('Name required.','warn');
-    STATE.warehouses.push({id:'wh'+uid(),name,location:$('#wh-location',overlay).value.trim(),manager:$('#wh-manager',overlay).value.trim()});
-    saveState();close();renderWarehouses();toast('Warehouse added.','success');
+      <div><label>Name *</label><input id="wh-name" style="width:100%;"></div>
+      <div><label>Location</label><input id="wh-location" style="width:100%;"></div>
+      <div><label>Manager</label><input id="wh-manager" style="width:100%;"></div>
+    </div>`, async (overlay, close) => {
+    const name = $('#wh-name', overlay).value.trim();
+    if (!name) return toast('Name required.', 'warn');
+    await API.createWarehouse({
+      name,
+      location: $('#wh-location', overlay).value.trim() || null,
+      manager:  $('#wh-manager',  overlay).value.trim() || null,
+    });
+    close(); await refreshSection('warehouse'); toast('Warehouse added.', 'success');
   });
 }
-function editWarehouse(id){
-  const w=STATE.warehouses.find(x=>x.id===id);if(!w)return;
-  modal('Edit Warehouse',`
+
+function editWarehouse(id) {
+  const w = STATE.warehouses.find(x => x.id === id); if (!w) return;
+  modal('Edit Warehouse', `
     <div class="form-grid">
       <div><label>Name</label><input id="wh-name" style="width:100%;" value="${w.name}"></div>
       <div><label>Location</label><input id="wh-location" style="width:100%;" value="${w.location}"></div>
       <div><label>Manager</label><input id="wh-manager" style="width:100%;" value="${w.manager}"></div>
-    </div>`,(overlay,close)=>{
-    w.name=$('#wh-name',overlay).value.trim()||w.name;
-    w.location=$('#wh-location',overlay).value.trim();
-    w.manager=$('#wh-manager',overlay).value.trim();
-    saveState();close();renderWarehouses();toast('Updated.','success');
+    </div>`, async (overlay, close) => {
+    await API.updateWarehouse(id, {
+      name:     $('#wh-name',     overlay).value.trim() || w.name,
+      location: $('#wh-location', overlay).value.trim() || null,
+      manager:  $('#wh-manager',  overlay).value.trim() || null,
+    });
+    close(); await refreshSection('warehouse'); toast('Updated.', 'success');
   });
 }
-function deleteWarehouse(id){
-  if(!confirm2('Delete this warehouse? Stock data will remain on products.'))return;
-  STATE.warehouses=STATE.warehouses.filter(w=>w.id!==id);
-  saveState();renderWarehouses();toast('Deleted.','warn');
+
+async function deleteWarehouse(id) {
+  if (!confirm2('Delete warehouse?')) return;
+  await API.deleteWarehouse(id);
+  await refreshSection('warehouse'); toast('Deleted.', 'warn');
 }
 
 /* ════════════════════════════════════════════════════════════════
-   6.  PRODUCTS / INVENTORY
+   7.  PRODUCTS
    ════════════════════════════════════════════════════════════════ */
 function renderProducts() {
-  const sec=$('#products');
-  const categories=[...new Set(STATE.products.map(p=>p.category))];
-  sec.innerHTML=`
+  const cats = [...new Set(STATE.products.map(p => p.category).filter(Boolean))];
+  $('#products').innerHTML = `
     <div class="card">
       <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:.75rem;margin-bottom:1.5rem;">
         <h2 style="margin:0;">Products & Inventory</h2>
         <div style="display:flex;gap:.75rem;flex-wrap:wrap;">
-          <input id="prod-search" type="search" placeholder="Search products…" style="width:200px;">
+          <input id="prod-search" type="search" placeholder="Search…" style="width:200px;">
           <select id="prod-cat-filter" style="width:160px;">
             <option value="">All Categories</option>
-            ${categories.map(c=>`<option>${c}</option>`).join('')}
+            ${cats.map(c=>`<option>${c}</option>`).join('')}
           </select>
           <button onclick="openAddProduct()">+ Add Product</button>
-          <button onclick="openPriceUpdateModal()" style="background:#8b5cf6;">✏ Bulk Price Update</button>
           <button onclick="exportProductsXLSX()" style="background:#16a34a;">⬇ Export</button>
         </div>
       </div>
       <div id="products-table-wrap"></div>
     </div>
     <div class="card" style="margin-top:1.5rem;">
-      <h3 style="margin-bottom:1rem;">Price Change History</h3>
-      <div id="price-history-wrap"></div>
+      <h3>Price Change History</h3>
+      <div id="price-history-wrap" style="margin-top:1rem;"></div>
     </div>`;
-  $('#prod-search').oninput=renderProductsTable;
-  $('#prod-cat-filter').onchange=renderProductsTable;
+  $('#prod-search').oninput = renderProductsTable;
+  $('#prod-cat-filter').onchange = renderProductsTable;
   renderProductsTable();
   renderPriceHistory();
 }
 
-function renderProductsTable(){
-  const search=($('#prod-search')?.value||'').toLowerCase();
-  const cat=$('#prod-cat-filter')?.value||'';
-  const low=STATE.settings.lowStockThreshold;
-  const filtered=STATE.products.filter(p=>
-    (!cat||p.category===cat)&&(!search||p.name.toLowerCase().includes(search)||p.sku.toLowerCase().includes(search))
+function renderProductsTable() {
+  const search = ($('#prod-search')?.value || '').toLowerCase();
+  const cat    = $('#prod-cat-filter')?.value || '';
+  const low    = STATE.settings.lowStockThreshold;
+  const list   = STATE.products.filter(p =>
+    (!cat || p.category === cat) &&
+    (!search || p.name.toLowerCase().includes(search) || p.sku.toLowerCase().includes(search))
   );
-  const wrap=$('#products-table-wrap');
-  if(!wrap)return;
-  if(!filtered.length){wrap.innerHTML='<p style="color:#9ca3af;text-align:center;padding:2rem;">No products found.</p>';return;}
-  wrap.innerHTML=`
+  const wrap = $('#products-table-wrap'); if (!wrap) return;
+  if (!list.length) { wrap.innerHTML = '<p style="color:#9ca3af;text-align:center;padding:2rem;">No products found.</p>'; return; }
+  wrap.innerHTML = `
     <table>
-      <thead><tr>
-        <th>SKU</th><th>Product</th><th>Category</th><th>Unit</th>
-        <th>Cost Price</th><th>Selling Price</th><th>Margin</th><th>Total Stock</th><th>Value</th><th>Actions</th>
-      </tr></thead>
-      <tbody>
-        ${filtered.map(p=>{
-          const stock=totalStock(p);
-          const val=stock*p.costPrice;
-          const isLow=stock<=(p.reorderLevel||low);
-          const margin=p.sellingPrice>0?((p.sellingPrice-p.costPrice)/p.sellingPrice*100):0;
-          return `<tr style="${isLow?'background:#fef9c3;':''}">
-            <td style="font-family:monospace;">${p.sku}</td>
-            <td><strong>${p.name}</strong>${p.barcode?`<br><small style="color:#9ca3af;">🔢 ${p.barcode}</small>`:''}</td>
-            <td><span class="badge badge-blue">${p.category}</span></td>
-            <td>${p.unit}</td>
-            <td>${fmt(p.costPrice)}</td>
-            <td>${fmt(p.sellingPrice)}</td>
-            <td style="color:${margin>=20?'#16a34a':margin>=10?'#d97706':'#dc2626'};font-weight:600;">${fmtPct(margin)}</td>
-            <td style="font-weight:700;color:${isLow?'#dc2626':'#16a34a'};">
-              ${fmtNum(stock)} ${isLow?'⚠':''}
-              <div style="font-size:.75rem;color:#64748b;margin-top:.2rem;">
-                ${STATE.warehouses.map(w=>`${w.name.split('–')[0].trim()}: ${p.stock[w.id]||0}`).join(' | ')}
-              </div>
-            </td>
-            <td>${fmt(val)}</td>
-            <td style="white-space:nowrap;">
-              <button onclick="editProduct('${p.id}')" style="font-size:.8rem;padding:.3rem .6rem;background:#6b7280;margin-right:.3rem;">Edit</button>
-              <button onclick="adjustStock('${p.id}')" style="font-size:.8rem;padding:.3rem .6rem;background:#0891b2;margin-right:.3rem;">Stock</button>
-              <button onclick="viewPriceHistory('${p.id}')" style="font-size:.8rem;padding:.3rem .6rem;background:#8b5cf6;margin-right:.3rem;">History</button>
-              <button onclick="deleteProduct('${p.id}')" class="danger" style="font-size:.8rem;padding:.3rem .6rem;">Del</button>
-            </td>
-          </tr>`;
-        }).join('')}
-      </tbody>
-      <tfoot>
-        <tr>
-          <td colspan="8" style="font-weight:700;text-align:right;">Total Inventory Value:</td>
-          <td style="font-weight:700;">${fmt(filtered.reduce((s,p)=>s+totalStock(p)*p.costPrice,0))}</td>
-          <td></td>
-        </tr>
-      </tfoot>
+      <thead><tr><th>SKU</th><th>Name</th><th>Category</th><th>Unit</th><th>Cost</th><th>Price</th><th>Margin</th><th>Stock</th><th>Value</th><th>Actions</th></tr></thead>
+      <tbody>${list.map(p => {
+        const stk = totalStock(p), val = stk * p.costPrice;
+        const isLow = stk <= (p.reorderLevel || low);
+        const margin = p.sellingPrice > 0 ? ((p.sellingPrice - p.costPrice) / p.sellingPrice * 100) : 0;
+        return `<tr style="${isLow ? 'background:#fef9c3;' : ''}">
+          <td style="font-family:monospace;">${p.sku}</td>
+          <td><strong>${p.name}</strong>${p.barcode ? `<br><small style="color:#9ca3af;">🔢 ${p.barcode}</small>` : ''}</td>
+          <td><span class="badge badge-blue">${p.category || '—'}</span></td>
+          <td>${p.unit}</td>
+          <td>${fmt(p.costPrice)}</td><td>${fmt(p.sellingPrice)}</td>
+          <td style="color:${margin>=20?'#16a34a':margin>=10?'#d97706':'#dc2626'};font-weight:600;">${fmtPct(margin)}</td>
+          <td style="font-weight:700;color:${isLow?'#dc2626':'#16a34a'};">
+            ${fmtNum(stk)} ${p.unit} ${isLow ? '⚠' : ''}
+            <div style="font-size:.75rem;color:#64748b;">
+              ${STATE.warehouses.map(w=>`${w.name.split('–')[0].trim()}: ${p.stock[w.id]||0}`).join(' | ')}
+            </div>
+          </td>
+          <td>${fmt(val)}</td>
+          <td style="white-space:nowrap;">
+            <button onclick="editProduct('${p.id}')" style="font-size:.8rem;padding:.3rem .6rem;background:#6b7280;margin-right:.3rem;">Edit</button>
+            <button onclick="adjustStock('${p.id}')" style="font-size:.8rem;padding:.3rem .6rem;background:#0891b2;margin-right:.3rem;">Stock</button>
+            <button onclick="deleteProduct('${p.id}')" class="danger" style="font-size:.8rem;padding:.3rem .6rem;">Del</button>
+          </td>
+        </tr>`;
+      }).join('')}</tbody>
+      <tfoot><tr>
+        <td colspan="8" style="font-weight:700;text-align:right;">Total Inventory Value:</td>
+        <td style="font-weight:700;">${fmt(list.reduce((s,p)=>s+totalStock(p)*p.costPrice,0))}</td><td></td>
+      </tr></tfoot>
     </table>`;
 }
 
-function renderPriceHistory(){
-  const wrap=$('#price-history-wrap');
-  if(!wrap)return;
-  if(!STATE.priceHistory.length){wrap.innerHTML='<p style="color:#9ca3af;">No price changes recorded yet.</p>';return;}
-  wrap.innerHTML=`
-    <table>
-      <thead><tr><th>Date</th><th>Product</th><th>Old Cost</th><th>New Cost</th><th>Old Sell</th><th>New Sell</th><th>Changed By</th></tr></thead>
-      <tbody>${STATE.priceHistory.slice(-30).reverse().map(h=>`
-        <tr>
-          <td>${fmtDate(h.date)}</td><td>${h.productName}</td>
-          <td>${fmt(h.oldCost)}</td><td>${fmt(h.newCost)}</td>
-          <td>${fmt(h.oldSell)}</td><td>${fmt(h.newSell)}</td>
-          <td>${h.changedBy||'System'}</td>
-        </tr>`).join('')}
-      </tbody>
-    </table>`;
+function renderPriceHistory() {
+  const wrap = $('#price-history-wrap'); if (!wrap) return;
+  if (!STATE.priceHistory.length) { wrap.innerHTML = '<p style="color:#9ca3af;">No price changes recorded yet.</p>'; return; }
+  wrap.innerHTML = `<table>
+    <thead><tr><th>Date</th><th>Product</th><th>Old Cost</th><th>New Cost</th><th>Old Price</th><th>New Price</th><th>By</th></tr></thead>
+    <tbody>${STATE.priceHistory.slice(-30).reverse().map(h=>`
+      <tr><td>${fmtDate(h.date)}</td><td>${h.productName}</td>
+        <td>${fmt(h.oldCost)}</td><td>${fmt(h.newCost)}</td>
+        <td>${fmt(h.oldSell)}</td><td>${fmt(h.newSell)}</td>
+        <td>${h.changedBy||'User'}</td></tr>`).join('')}
+    </tbody></table>`;
 }
 
-function productFormHTML(p={}){
-  const catList=[...new Set(STATE.products.map(x=>x.category))];
-  const whFields=STATE.warehouses.map(w=>
-    `<div><label>Stock in ${w.name}</label>
-     <input type="number" id="ps-${w.id}" style="width:100%;" min="0" value="${p.stock?.[w.id]??0}"></div>`
-  ).join('');
-  const supOpts=STATE.suppliers.map(s=>`<option value="${s.id}" ${p.supplierId===s.id?'selected':''}>${s.name}</option>`).join('');
+function productFormHTML(p = {}) {
+  const cats = [...new Set(STATE.products.map(x => x.category).filter(Boolean))];
+  const supOpts = STATE.suppliers.map(s => `<option value="${s.id}" ${p.supplierId===s.id?'selected':''}>${s.name}</option>`).join('');
+  const whOpts  = STATE.warehouses.map(w => `<option value="${w.id}" ${p.warehouseId===w.id?'selected':''}>${w.name}</option>`).join('');
+  const whFields= STATE.warehouses.map(w => `
+    <div><label>Stock in ${w.name}</label>
+      <input type="number" id="ps-${w.id}" style="width:100%;" min="0" value="${p.stock?.[w.id]??0}">
+    </div>`).join('');
   return `
     <div class="form-grid">
-      <div><label>Product Name *</label><input id="pf-name" style="width:100%;" value="${p.name||''}"></div>
-      <div><label>SKU / Code *</label><input id="pf-sku" style="width:100%;" value="${p.sku||''}"></div>
-      <div><label>Barcode (optional)</label><input id="pf-barcode" style="width:100%;" value="${p.barcode||''}"></div>
+      <div><label>Name *</label><input id="pf-name" style="width:100%;" value="${p.name||''}"></div>
+      <div><label>SKU</label><input id="pf-sku" style="width:100%;" value="${p.sku||''}"></div>
+      <div><label>Barcode</label><input id="pf-barcode" style="width:100%;" value="${p.barcode||''}"></div>
       <div><label>Category</label>
-        <input id="pf-cat" style="width:100%;" list="cat-list" value="${p.category||''}">
-        <datalist id="cat-list">${catList.map(c=>`<option>${c}</option>`).join('')}</datalist>
+        <input id="pf-cat" style="width:100%;" list="cat-dl" value="${p.category||''}">
+        <datalist id="cat-dl">${cats.map(c=>`<option>${c}</option>`).join('')}</datalist>
       </div>
-      <div><label>Unit (Bag, Keg, Ctn…)</label><input id="pf-unit" style="width:100%;" value="${p.unit||''}"></div>
+      <div><label>Unit</label><input id="pf-unit" style="width:100%;" value="${p.unit||''}"></div>
       <div><label>Cost Price (₦)</label><input id="pf-cost" type="number" style="width:100%;" value="${p.costPrice||''}"></div>
-      <div><label>Selling Price (₦)</label><input id="pf-sell" type="number" style="width:100%;" value="${p.sellingPrice||''}"></div>
+      <div><label>Selling Price (₦) *</label><input id="pf-sell" type="number" style="width:100%;" value="${p.sellingPrice||''}"></div>
       <div><label>Reorder Level</label><input id="pf-reorder" type="number" style="width:100%;" value="${p.reorderLevel||10}"></div>
       <div><label>Supplier</label><select id="pf-sup" style="width:100%;"><option value="">None</option>${supOpts}</select></div>
+      <div><label>Primary Warehouse</label><select id="pf-wh" style="width:100%;"><option value="">None</option>${whOpts}</select></div>
       <div style="grid-column:1/-1;"><label>Description</label><input id="pf-desc" style="width:100%;" value="${p.description||''}"></div>
       <div style="grid-column:1/-1;"><strong>Stock by Warehouse</strong></div>
       ${whFields}
     </div>`;
 }
 
-function openAddProduct(){
-  modal('Add Product',productFormHTML(),(overlay,close)=>{
-    const name=$('#pf-name',overlay).value.trim();
-    const sku=$('#pf-sku',overlay).value.trim();
-    if(!name||!sku)return toast('Name and SKU required.','warn');
-    if(STATE.products.find(p=>p.sku===sku))return toast('SKU already exists.','error');
+function openAddProduct() {
+  modal('Add Product', productFormHTML(), async (overlay, close) => {
+    const name  = $('#pf-name', overlay).value.trim();
+    const price = parseFloat($('#pf-sell', overlay).value);
+    if (!name)      return toast('Name required.', 'warn');
+    if (isNaN(price)) return toast('Selling price required.', 'warn');
 
-    // ── DB patch handles the actual save when loaded ──────────
-    // If script_db_patch.js is loaded this modal save button gets
-    // re-bound by the patch. This fallback only fires offline.
-    if (window._dbPatchLoaded) {
-      // patch is loaded — close this and let patch's modal handle it
-      // (patch already overwrote openAddProduct on window,
-      //  but script-scope calls land here; we just re-invoke via window)
-      overlay.remove();
-      window.openAddProduct();
-      return;
-    }
-
-    const stock={};
-    STATE.warehouses.forEach(w=>{stock[w.id]=parseInt($(`#ps-${w.id}`,overlay).value)||0;});
-    STATE.products.push({
-      id:'P'+uid(),name,sku,
-      barcode:$('#pf-barcode',overlay).value.trim(),
-      category:$('#pf-cat',overlay).value.trim(),
-      unit:$('#pf-unit',overlay).value.trim(),
-      costPrice:parseFloat($('#pf-cost',overlay).value)||0,
-      sellingPrice:parseFloat($('#pf-sell',overlay).value)||0,
-      reorderLevel:parseInt($('#pf-reorder',overlay).value)||10,
-      supplierId:$('#pf-sup',overlay).value,
-      description:$('#pf-desc',overlay).value.trim(),stock,
+    let totalStockQty = 0;
+    STATE.warehouses.forEach(w => {
+      totalStockQty += parseInt($(`#ps-${w.id}`, overlay).value) || 0;
     });
-    saveState();close();renderProductsTable();toast('Product added.','success');
+
+    await API.createProduct({
+      name,
+      sku:              $('#pf-sku',     overlay).value.trim() || null,
+      barcode:          $('#pf-barcode', overlay).value.trim() || null,
+      description:      $('#pf-desc',   overlay).value.trim() || null,
+      price,
+      costPrice:        parseFloat($('#pf-cost',    overlay).value) || 0,
+      stock:            totalStockQty,
+      lowStockThreshold:parseInt($('#pf-reorder', overlay).value) || 10,
+      unit:             $('#pf-unit', overlay).value.trim() || null,
+      supplierId:       $('#pf-sup',  overlay).value || null,
+      warehouseId:      $('#pf-wh',   overlay).value || null,
+      category:         $('#pf-cat',  overlay).value.trim() || null,
+    });
+    close(); await refreshSection('products'); toast('Product added.', 'success');
   });
 }
 
-function editProduct(id){
-  const p=STATE.products.find(x=>x.id===id);if(!p)return;
-  modal(`Edit – ${p.name}`,productFormHTML(p),(overlay,close)=>{
-    const oldCost=p.costPrice, oldSell=p.sellingPrice;
-    p.name=$('#pf-name',overlay).value.trim()||p.name;
-    p.sku=$('#pf-sku',overlay).value.trim()||p.sku;
-    p.barcode=$('#pf-barcode',overlay).value.trim();
-    p.category=$('#pf-cat',overlay).value.trim();
-    p.unit=$('#pf-unit',overlay).value.trim();
-    p.costPrice=parseFloat($('#pf-cost',overlay).value)||p.costPrice;
-    p.sellingPrice=parseFloat($('#pf-sell',overlay).value)||p.sellingPrice;
-    p.reorderLevel=parseInt($('#pf-reorder',overlay).value)||p.reorderLevel;
-    p.supplierId=$('#pf-sup',overlay).value;
-    p.description=$('#pf-desc',overlay).value.trim();
-    STATE.warehouses.forEach(w=>{p.stock[w.id]=parseInt($(`#ps-${w.id}`,overlay).value)||0;});
-    if(oldCost!==p.costPrice||oldSell!==p.sellingPrice){
-      STATE.priceHistory.push({date:nowISO(),productId:p.id,productName:p.name,
-        oldCost,newCost:p.costPrice,oldSell,newSell:p.sellingPrice,changedBy:'User'});
+function editProduct(id) {
+  const p = STATE.products.find(x => x.id === id); if (!p) return;
+  modal(`Edit – ${p.name}`, productFormHTML(p), async (overlay, close) => {
+    const oldCost = p.costPrice, oldSell = p.sellingPrice;
+    const newCost = parseFloat($('#pf-cost', overlay).value) || p.costPrice;
+    const newSell = parseFloat($('#pf-sell', overlay).value) || p.sellingPrice;
+
+    let totalStockQty = 0;
+    STATE.warehouses.forEach(w => { totalStockQty += parseInt($(`#ps-${w.id}`, overlay).value) || 0; });
+
+    await API.updateProduct(id, {
+      name:             $('#pf-name',    overlay).value.trim() || p.name,
+      sku:              $('#pf-sku',     overlay).value.trim() || null,
+      barcode:          $('#pf-barcode', overlay).value.trim() || null,
+      description:      $('#pf-desc',   overlay).value.trim() || null,
+      price:            newSell,
+      costPrice:        newCost,
+      stock:            totalStockQty,
+      lowStockThreshold:parseInt($('#pf-reorder', overlay).value) || p.reorderLevel,
+      unit:             $('#pf-unit', overlay).value.trim() || null,
+      supplierId:       $('#pf-sup',  overlay).value || null,
+      warehouseId:      $('#pf-wh',   overlay).value || null,
+      category:         $('#pf-cat',  overlay).value.trim() || null,
+    });
+
+    if (oldCost !== newCost || oldSell !== newSell) {
+      STATE.priceHistory.push({ date: nowISO(), productId: id, productName: p.name,
+        oldCost, newCost, oldSell, newSell, changedBy: 'User' });
     }
-    saveState();close();renderProductsTable();renderPriceHistory();toast('Product updated.','success');
+    close(); await refreshSection('products'); toast('Product updated.', 'success');
   });
 }
 
-function viewPriceHistory(productId){
-  const p=STATE.products.find(x=>x.id===productId);
-  const hist=STATE.priceHistory.filter(h=>h.productId===productId).reverse();
-  modal(`Price History – ${p?.name}`,`
-    ${hist.length?`
-      <table>
-        <thead><tr><th>Date</th><th>Old Cost</th><th>New Cost</th><th>Old Sell</th><th>New Sell</th></tr></thead>
-        <tbody>${hist.map(h=>`
-          <tr><td>${fmtDate(h.date)}</td><td>${fmt(h.oldCost)}</td><td>${fmt(h.newCost)}</td>
-          <td>${fmt(h.oldSell)}</td><td>${fmt(h.newSell)}</td></tr>`).join('')}
-        </tbody>
-      </table>`:
-    '<p style="color:#9ca3af;">No price changes for this product.</p>'}`,null,'Close');
-}
-
-function openPriceUpdateModal(){
-  const prodOpts=STATE.products.map(p=>`
-    <tr>
-      <td><input type="checkbox" class="bulk-price-chk" value="${p.id}"> ${p.name}</td>
-      <td style="font-family:monospace;">${p.sku}</td>
-      <td>${fmt(p.costPrice)}</td><td>${fmt(p.sellingPrice)}</td>
-    </tr>`).join('');
-  modal('Bulk Price Update',`
-    <div style="margin-bottom:1rem;display:flex;gap:.75rem;align-items:flex-end;flex-wrap:wrap;">
-      <div><label>Adjustment Type</label>
-        <select id="bpu-type" style="width:160px;">
-          <option value="pct-up">% Increase</option>
-          <option value="pct-dn">% Decrease</option>
-          <option value="fixed-up">Fixed Increase</option>
-          <option value="fixed-dn">Fixed Decrease</option>
-          <option value="set-margin">Set Margin %</option>
-        </select>
-      </div>
-      <div><label>Value</label><input id="bpu-val" type="number" min="0" style="width:120px;" placeholder="e.g. 10"></div>
-      <div><label>Apply To</label>
-        <select id="bpu-apply" style="width:140px;">
-          <option value="sell">Selling Price Only</option>
-          <option value="cost">Cost Price Only</option>
-          <option value="both">Both Prices</option>
-        </select>
-      </div>
-    </div>
-    <div style="max-height:300px;overflow-y:auto;">
-      <table>
-        <thead><tr><th style="width:40px;"><input type="checkbox" id="bpu-all" onchange="$$('.bulk-price-chk').forEach(c=>c.checked=this.checked)"></th>
-          <th>Product</th><th>Current Cost</th><th>Current Sell</th></tr></thead>
-        <tbody>${prodOpts}</tbody>
-      </table>
-    </div>
-    <p style="color:#64748b;font-size:.8rem;margin-top:.75rem;">Select products above and apply price change.</p>`,
-  (overlay,close)=>{
-    const type=$('#bpu-type',overlay).value;
-    const val=parseFloat($('#bpu-val',overlay).value);
-    const applyTo=$('#bpu-apply',overlay).value;
-    if(isNaN(val)||val<0)return toast('Enter a valid value.','warn');
-    const selected=[...$$('.bulk-price-chk',overlay)].filter(c=>c.checked).map(c=>c.value);
-    if(!selected.length)return toast('Select at least one product.','warn');
-    selected.forEach(pid=>{
-      const p=STATE.products.find(x=>x.id===pid);if(!p)return;
-      const oldCost=p.costPrice,oldSell=p.sellingPrice;
-      function adjust(price){
-        if(type==='pct-up')  return price*(1+val/100);
-        if(type==='pct-dn')  return price*(1-val/100);
-        if(type==='fixed-up')return price+val;
-        if(type==='fixed-dn')return Math.max(0,price-val);
-        if(type==='set-margin')return p.costPrice/(1-val/100);
-        return price;
-      }
-      if(applyTo==='sell'||applyTo==='both') p.sellingPrice=Math.round(adjust(p.sellingPrice));
-      if(applyTo==='cost'||applyTo==='both') p.costPrice=Math.round(adjust(p.costPrice));
-      if(oldCost!==p.costPrice||oldSell!==p.sellingPrice){
-        STATE.priceHistory.push({date:nowISO(),productId:p.id,productName:p.name,
-          oldCost,newCost:p.costPrice,oldSell,newSell:p.sellingPrice,changedBy:'Bulk Update'});
-      }
-    });
-    saveState();close();renderProductsTable();renderPriceHistory();
-    toast(`Updated prices for ${selected.length} product(s).`,'success');
-  },'Apply Changes','700px');
-}
-
-function adjustStock(id){
-  const p=STATE.products.find(x=>x.id===id);if(!p)return;
-  const whOpts=STATE.warehouses.map(w=>`<option value="${w.id}">${w.name}</option>`).join('');
-  modal(`Adjust Stock – ${p.name}`,`
+function adjustStock(id) {
+  const p = STATE.products.find(x => x.id === id); if (!p) return;
+  const whOpts = STATE.warehouses.map(w => `<option value="${w.id}">${w.name}</option>`).join('');
+  modal(`Adjust Stock – ${p.name}`, `
     <div class="form-grid">
       <div><label>Warehouse</label><select id="adj-wh" style="width:100%;">${whOpts}</select></div>
-      <div><label>Adjustment Type</label>
+      <div><label>Type</label>
         <select id="adj-type" style="width:100%;">
-          <option value="add">Add (Purchase/Return)</option>
-          <option value="sub">Subtract (Damage/Loss)</option>
-          <option value="set">Set Exact Value</option>
+          <option value="add">Add</option>
+          <option value="sub">Subtract</option>
+          <option value="set">Set Exact</option>
         </select></div>
       <div><label>Quantity</label><input id="adj-qty" type="number" min="0" style="width:100%;"></div>
-      <div><label>Reason</label><input id="adj-reason" style="width:100%;" placeholder="Optional note"></div>
+      <div><label>Reason</label><input id="adj-reason" style="width:100%;"></div>
     </div>
     <p style="margin-top:.5rem;color:#64748b;font-size:.875rem;">
-      Current: ${STATE.warehouses.map(w=>`${w.name}: <strong>${p.stock[w.id]||0}</strong>`).join(' | ')}
-    </p>`,(overlay,close)=>{
-    const whId=$('#adj-wh',overlay).value,type=$('#adj-type',overlay).value;
-    const qty=parseFloat($('#adj-qty',overlay).value);
-    if(isNaN(qty)||qty<0)return toast('Enter valid quantity.','warn');
-    if(type==='add')p.stock[whId]=(p.stock[whId]||0)+qty;
-    else if(type==='sub')p.stock[whId]=Math.max(0,(p.stock[whId]||0)-qty);
-    else p.stock[whId]=qty;
-    saveState();close();renderProductsTable();toast('Stock adjusted.','success');
+      Current total: <strong>${totalStock(p)} ${p.unit}</strong>
+    </p>`, async (overlay, close) => {
+    const qty = parseFloat($('#adj-qty', overlay).value);
+    if (isNaN(qty) || qty < 0) return toast('Enter a valid quantity.', 'warn');
+    await API.adjustStock(id, {
+      warehouseId: $('#adj-wh',     overlay).value,
+      type:        $('#adj-type',   overlay).value,
+      quantity:    qty,
+      reason:      $('#adj-reason', overlay).value.trim(),
+    });
+    close(); await refreshSection('products'); toast('Stock adjusted.', 'success');
   });
 }
-function deleteProduct(id){
-  if(!confirm2('Delete this product permanently?'))return;
-  STATE.products=STATE.products.filter(p=>p.id!==id);
-  saveState();renderProductsTable();toast('Product deleted.','warn');
+
+async function deleteProduct(id) {
+  if (!confirm2('Delete this product permanently?')) return;
+  await API.deleteProduct(id);
+  await refreshSection('products'); toast('Deleted.', 'warn');
 }
-function exportProductsXLSX(){
-  const rows=STATE.products.map(p=>({
-    SKU:p.sku,Name:p.name,Category:p.category,Unit:p.unit,
-    'Cost Price':p.costPrice,'Selling Price':p.sellingPrice,
-    'Margin %':((p.sellingPrice-p.costPrice)/p.sellingPrice*100).toFixed(1),
-    'Total Stock':totalStock(p),'Inventory Value':totalStock(p)*p.costPrice,
+
+function exportProductsXLSX() {
+  const rows = STATE.products.map(p => ({
+    SKU: p.sku, Name: p.name, Category: p.category, Unit: p.unit,
+    'Cost Price': p.costPrice, 'Selling Price': p.sellingPrice,
+    'Margin %': p.sellingPrice > 0 ? ((p.sellingPrice-p.costPrice)/p.sellingPrice*100).toFixed(1) : 0,
+    'Total Stock': totalStock(p), 'Inventory Value': totalStock(p)*p.costPrice,
   }));
-  const ws=XLSX.utils.json_to_sheet(rows);
-  const wb=XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb,ws,'Products');
-  XLSX.writeFile(wb,'cnjohnson_products.xlsx');
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(rows), 'Products');
+  XLSX.writeFile(wb, 'cnjohnson_products.xlsx');
 }
 
 /* ════════════════════════════════════════════════════════════════
-   7.  BULK DISCOUNT MANAGEMENT
+   8.  BULK DISCOUNT TIERS
    ════════════════════════════════════════════════════════════════ */
-function renderBulkDiscounts(){
-  const sec=$('#bulk-discounts');
-  if(!sec)return;
-  sec.innerHTML=`
+function renderBulkDiscounts() {
+  const sec = $('#bulk-discounts'); if (!sec) return;
+  sec.innerHTML = `
     <div class="card">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1.5rem;">
         <div>
           <h2 style="margin:0;">Bulk Quantity Discount Tiers</h2>
-          <p style="color:#64748b;font-size:.875rem;margin:.3rem 0 0;">
-            Automatic discounts applied at POS based on item quantity. Higher quantity = bigger discount.
-          </p>
+          <p style="color:#64748b;font-size:.875rem;margin:.3rem 0 0;">Auto-applied at POS based on item quantity.</p>
         </div>
-        <div style="display:flex;gap:.75rem;">
-          <label style="display:flex;align-items:center;gap:.5rem;font-size:.9rem;cursor:pointer;">
-            <input type="checkbox" ${STATE.settings.enableBulkDiscount?'checked':''} onchange="STATE.settings.enableBulkDiscount=this.checked;saveState();toast('Bulk discounts '+(this.checked?'enabled':'disabled')+'.','info');">
+        <div style="display:flex;gap:.75rem;align-items:center;">
+          <label style="display:flex;align-items:center;gap:.5rem;cursor:pointer;">
+            <input type="checkbox" ${STATE.settings.enableBulkDiscount?'checked':''} onchange="toggleBulkDiscounts(this.checked)">
             Enable Bulk Discounts
           </label>
           <button onclick="openAddDiscountTier()">+ Add Tier</button>
         </div>
       </div>
-
-      <!-- Visual tier display -->
-      <div style="display:flex;gap:1rem;flex-wrap:wrap;margin-bottom:2rem;padding:1.25rem;background:#f8fafc;border-radius:10px;border:1px solid #e5e7eb;">
-        ${STATE.bulkDiscountTiers.filter(t=>t.active).sort((a,b)=>a.minQty-b.minQty).map((t,i)=>`
-          <div style="display:flex;align-items:center;gap:.75rem;">
-            <div style="text-align:center;background:linear-gradient(135deg,#1e40af,#2563eb);color:#fff;
-              border-radius:10px;padding:1rem 1.25rem;min-width:120px;">
-              <div style="font-size:1.5rem;font-weight:800;">${t.discountPct}%</div>
-              <div style="font-size:.8rem;opacity:.85;margin-top:.2rem;">${t.name}</div>
-              <div style="font-size:.75rem;opacity:.7;margin-top:.2rem;">
-                ${t.minQty}${t.maxQty<99999?'–'+t.maxQty:'+'} units
-              </div>
-            </div>
-            ${i<STATE.bulkDiscountTiers.filter(t=>t.active).length-1?
-              '<div style="color:#94a3b8;font-size:1.25rem;">→</div>':''
-            }
-          </div>`).join('')}
-        ${!STATE.bulkDiscountTiers.filter(t=>t.active).length?
-          '<p style="color:#9ca3af;">No active tiers. Add one to get started.</p>':''}
-      </div>
-
       <table>
-        <thead><tr>
-          <th>Tier Name</th><th>Min Qty</th><th>Max Qty</th><th>Discount %</th>
-          <th>Applies To</th><th>Status</th><th>Actions</th>
-        </tr></thead>
-        <tbody>
-          ${STATE.bulkDiscountTiers.map(t=>`
-            <tr>
-              <td><strong>${t.name}</strong></td>
-              <td>${fmtNum(t.minQty)}</td>
-              <td>${t.maxQty>=99999?'Unlimited':fmtNum(t.maxQty)}</td>
-              <td><span style="font-size:1.1rem;font-weight:700;color:#2563eb;">${t.discountPct}%</span></td>
-              <td>${t.productIds&&t.productIds.length?`${t.productIds.length} specific product(s)`:'All products'}</td>
-              <td>
-                <label style="display:flex;align-items:center;gap:.4rem;cursor:pointer;">
-                  <input type="checkbox" ${t.active?'checked':''} 
-                    onchange="toggleDiscountTier('${t.id}',this.checked)"> Active
-                </label>
-              </td>
-              <td style="white-space:nowrap;">
-                <button onclick="editDiscountTier('${t.id}')" style="font-size:.8rem;padding:.3rem .6rem;background:#6b7280;margin-right:.3rem;">Edit</button>
-                <button onclick="deleteDiscountTier('${t.id}')" class="danger" style="font-size:.8rem;padding:.3rem .6rem;">Del</button>
-              </td>
-            </tr>`).join('')}
+        <thead><tr><th>Name</th><th>Min Qty</th><th>Max Qty</th><th>Discount %</th><th>Status</th><th>Actions</th></tr></thead>
+        <tbody>${STATE.bulkDiscountTiers.map(t=>`
+          <tr>
+            <td><strong>${t.name}</strong></td>
+            <td>${fmtNum(t.minQty)}</td>
+            <td>${(t.maxQty||0)>=99999?'Unlimited':fmtNum(t.maxQty||0)}</td>
+            <td><span style="font-size:1.1rem;font-weight:700;color:#2563eb;">${t.discountPct}%</span></td>
+            <td><label style="display:flex;align-items:center;gap:.4rem;cursor:pointer;">
+              <input type="checkbox" ${t.active?'checked':''} onchange="toggleDiscountTier('${t.id}',this.checked)"> Active
+            </label></td>
+            <td style="white-space:nowrap;">
+              <button onclick="editDiscountTier('${t.id}')" style="font-size:.8rem;padding:.3rem .6rem;background:#6b7280;margin-right:.3rem;">Edit</button>
+              <button onclick="deleteDiscountTier('${t.id}')" class="danger" style="font-size:.8rem;padding:.3rem .6rem;">Del</button>
+            </td>
+          </tr>`).join('')}
         </tbody>
       </table>
-    </div>
-
-    <div class="card" style="margin-top:1.5rem;">
-      <h3 style="margin-bottom:1rem;">How Bulk Discounts Work at POS</h3>
-      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:1rem;">
-        <div style="background:#eff6ff;border-radius:8px;padding:1rem;border-left:4px solid #2563eb;">
-          <h4 style="color:#1e40af;margin:0 0 .5rem;">🔢 Per-Item Calculation</h4>
-          <p style="color:#374151;font-size:.875rem;margin:0;">Each cart item's quantity is checked independently against discount tiers.</p>
-        </div>
-        <div style="background:#f0fdf4;border-radius:8px;padding:1rem;border-left:4px solid #16a34a;">
-          <h4 style="color:#15803d;margin:0 0 .5rem;">🏆 Best Tier Wins</h4>
-          <p style="color:#374151;font-size:.875rem;margin:0;">If multiple tiers match, the highest discount percentage is applied automatically.</p>
-        </div>
-        <div style="background:#fff7ed;border-radius:8px;padding:1rem;border-left:4px solid #f59e0b;">
-          <h4 style="color:#b45309;margin:0 0 .5rem;">💡 Upsell Prompts</h4>
-          <p style="color:#374151;font-size:.875rem;margin:0;">POS shows "Add X more to get Y% discount" nudges to help close bigger deals.</p>
-        </div>
-        <div style="background:#fdf4ff;border-radius:8px;padding:1rem;border-left:4px solid #8b5cf6;">
-          <h4 style="color:#7c3aed;margin:0 0 .5rem;">🎯 Product-Specific</h4>
-          <p style="color:#374151;font-size:.875rem;margin:0;">Tiers can be restricted to specific products or apply globally to all items.</p>
-        </div>
-      </div>
     </div>`;
 }
 
-function toggleDiscountTier(id, active){
-  const t=STATE.bulkDiscountTiers.find(x=>x.id===id);
-  if(t){ t.active=active; saveState(); toast(`Tier "${t.name}" ${active?'activated':'deactivated'}.`,'info'); }
+async function toggleBulkDiscounts(enabled) {
+  await API.updateSettings({ enableBulkDiscount: enabled });
+  STATE.settings.enableBulkDiscount = enabled;
+  toast(`Bulk discounts ${enabled?'enabled':'disabled'}.`, 'info');
 }
 
-function discountTierFormHTML(t={}){
-  const prodOptions=STATE.products.map(p=>`
-    <label style="display:flex;align-items:center;gap:.4rem;font-size:.85rem;cursor:pointer;">
-      <input type="checkbox" class="dt-prod" value="${p.id}" 
-        ${(t.productIds||[]).includes(p.id)?'checked':''}> ${p.name}
-    </label>`).join('');
+async function toggleDiscountTier(id, active) {
+  await API.updateDiscountTier(id, { active });
+  const t = STATE.bulkDiscountTiers.find(x => x.id === id);
+  if (t) { t.active = active; renderBulkDiscounts(); }
+}
+
+function discountTierFormHTML(t = {}) {
   return `
     <div class="form-grid">
       <div><label>Tier Name *</label><input id="dt-name" style="width:100%;" value="${t.name||''}"></div>
       <div><label>Discount % *</label><input id="dt-pct" type="number" min="0.1" max="99" step="0.5" style="width:100%;" value="${t.discountPct||''}"></div>
-      <div><label>Minimum Quantity *</label><input id="dt-min" type="number" min="1" style="width:100%;" value="${t.minQty||''}"></div>
-      <div><label>Maximum Quantity (leave 0 for unlimited)</label><input id="dt-max" type="number" min="0" style="width:100%;" value="${t.maxQty>=99999?0:(t.maxQty||0)}"></div>
-    </div>
-    <div style="margin-top:1rem;">
-      <label>Applies To (leave all unchecked = all products)</label>
-      <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:.4rem;
-        max-height:200px;overflow-y:auto;border:1px solid #e5e7eb;border-radius:6px;padding:.75rem;margin-top:.4rem;">
-        ${prodOptions}
-      </div>
+      <div><label>Min Quantity *</label><input id="dt-min" type="number" min="1" style="width:100%;" value="${t.minQty||''}"></div>
+      <div><label>Max Quantity (0 = unlimited)</label><input id="dt-max" type="number" min="0" style="width:100%;" value="${(t.maxQty||0)>=99999?0:(t.maxQty||0)}"></div>
     </div>`;
 }
 
-function openAddDiscountTier(){
-  modal('Add Bulk Discount Tier',discountTierFormHTML(),(overlay,close)=>{
-    const name=$('#dt-name',overlay).value.trim();
-    const pct=parseFloat($('#dt-pct',overlay).value);
-    const min=parseInt($('#dt-min',overlay).value);
-    const maxRaw=parseInt($('#dt-max',overlay).value)||0;
-    const max=maxRaw===0?99999:maxRaw;
-    if(!name||isNaN(pct)||isNaN(min))return toast('Fill required fields.','warn');
-    if(min>=max&&max!==99999)return toast('Max qty must be greater than min.','warn');
-    const productIds=[...$$('.dt-prod',overlay)].filter(c=>c.checked).map(c=>c.value);
-    STATE.bulkDiscountTiers.push({id:'BD'+uid(),name,discountPct:pct,minQty:min,maxQty:max,productIds,active:true});
-    saveState();close();renderBulkDiscounts();toast('Discount tier added.','success');
+function openAddDiscountTier() {
+  modal('Add Bulk Discount Tier', discountTierFormHTML(), async (overlay, close) => {
+    const name = $('#dt-name', overlay).value.trim();
+    const pct  = parseFloat($('#dt-pct', overlay).value);
+    const min  = parseInt($('#dt-min',  overlay).value);
+    const maxR = parseInt($('#dt-max',  overlay).value) || 0;
+    if (!name || isNaN(pct) || isNaN(min)) return toast('Fill required fields.', 'warn');
+    await API.createDiscountTier({ name, discountPct: pct, minQty: min, maxQty: maxR || null, active: true });
+    close(); await refreshSection('bulk-discounts'); toast('Tier added.', 'success');
   });
 }
-function editDiscountTier(id){
-  const t=STATE.bulkDiscountTiers.find(x=>x.id===id);if(!t)return;
-  modal(`Edit Tier – ${t.name}`,discountTierFormHTML(t),(overlay,close)=>{
-    t.name=$('#dt-name',overlay).value.trim()||t.name;
-    t.discountPct=parseFloat($('#dt-pct',overlay).value)||t.discountPct;
-    t.minQty=parseInt($('#dt-min',overlay).value)||t.minQty;
-    const maxRaw=parseInt($('#dt-max',overlay).value)||0;
-    t.maxQty=maxRaw===0?99999:maxRaw;
-    t.productIds=[...$$('.dt-prod',overlay)].filter(c=>c.checked).map(c=>c.value);
-    saveState();close();renderBulkDiscounts();toast('Tier updated.','success');
+
+function editDiscountTier(id) {
+  const t = STATE.bulkDiscountTiers.find(x => x.id === id); if (!t) return;
+  modal(`Edit Tier – ${t.name}`, discountTierFormHTML(t), async (overlay, close) => {
+    const maxR = parseInt($('#dt-max', overlay).value) || 0;
+    await API.updateDiscountTier(id, {
+      name:        $('#dt-name', overlay).value.trim() || t.name,
+      discountPct: parseFloat($('#dt-pct', overlay).value) || t.discountPct,
+      minQty:      parseInt($('#dt-min', overlay).value) || t.minQty,
+      maxQty:      maxR || null,
+    });
+    close(); await refreshSection('bulk-discounts'); toast('Tier updated.', 'success');
   });
 }
-function deleteDiscountTier(id){
-  if(!confirm2('Delete this discount tier?'))return;
-  STATE.bulkDiscountTiers=STATE.bulkDiscountTiers.filter(t=>t.id!==id);
-  saveState();renderBulkDiscounts();toast('Tier deleted.','warn');
+
+async function deleteDiscountTier(id) {
+  if (!confirm2('Delete this tier?')) return;
+  await API.deleteDiscountTier(id);
+  await refreshSection('bulk-discounts'); toast('Deleted.', 'warn');
 }
 
 /* ════════════════════════════════════════════════════════════════
-   8.  POINT OF SALE (POS)  ← ENHANCED with bulk discounts
+   9.  POINT OF SALE
    ════════════════════════════════════════════════════════════════ */
-let posCart=[];
-let posWarehouse=STATE.warehouses[0]?.id||'';
+let posCart = [];
+let posWarehouse = '';
 
-function renderPOS(){
-  const sec=$('#pos');
-  const custOpts=`<option value="">Walk-in Customer</option>`+
+function renderPOS() {
+  if (!posWarehouse && STATE.warehouses.length) posWarehouse = STATE.warehouses[0].id;
+  const cOpts = `<option value="">Walk-in Customer</option>` +
     STATE.customers.map(c=>`<option value="${c.id}">${c.name}${c.balance>0?' ⚠('+fmt(c.balance)+' owed)':''}</option>`).join('');
-  const repOpts=`<option value="">No Rep</option>`+
-    STATE.salesReps.map(r=>`<option value="${r.id}">${r.name}</option>`).join('');
-  const whOpts=STATE.warehouses.map(w=>`<option value="${w.id}" ${w.id===posWarehouse?'selected':''}>${w.name}</option>`).join('');
-  const prodOpts=STATE.products.map(p=>`<option value="${p.id}">${p.name} (${p.sku})</option>`).join('');
+  const rOpts = `<option value="">No Rep</option>` + STATE.salesReps.map(r=>`<option value="${r.id}">${r.name}</option>`).join('');
+  const wOpts = STATE.warehouses.map(w=>`<option value="${w.id}" ${w.id===posWarehouse?'selected':''}>${w.name}</option>`).join('');
 
-  sec.innerHTML=`
+  $('#pos').innerHTML = `
     <div style="display:grid;grid-template-columns:1fr 420px;gap:1.5rem;align-items:start;">
-
-      <div>
-        <div class="card">
-          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem;">
-            <h2 style="margin:0;">Point of Sale</h2>
-            ${STATE.settings.enableBulkDiscount?
-              `<div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;padding:.4rem .75rem;
-                font-size:.8rem;color:#1e40af;font-weight:600;">✓ Bulk Discounts Active</div>`:''}
-          </div>
-          <div class="form-grid" style="margin-bottom:1rem;">
-            <div>
-              <label>Selling From Warehouse</label>
-              <select id="pos-wh" style="width:100%;" onchange="posWarehouse=this.value;renderProductPalette();">${whOpts}</select>
-            </div>
-            <div>
-              <label>Customer</label>
-              <select id="pos-customer" style="width:100%;" onchange="onPOSCustomerChange()">${custOpts}</select>
-            </div>
-            <div>
-              <label>Sales Rep</label>
-              <select id="pos-rep" style="width:100%;">${repOpts}</select>
-            </div>
-            <div>
-              <label>Payment Method</label>
-              <select id="pos-payment" style="width:100%;">
-                <option value="cash">Cash</option>
-                <option value="transfer">Bank Transfer</option>
-                <option value="pos-machine">POS Machine</option>
-                <option value="credit">Credit (Invoice)</option>
-                <option value="cheque">Cheque</option>
-                <option value="split">Split Payment</option>
-              </select>
-            </div>
-          </div>
-
-          <div id="pos-loyalty-banner" style="display:none;background:#fdf4ff;border:1px solid #e9d5ff;
-            border-radius:8px;padding:.75rem 1rem;margin-bottom:1rem;font-size:.875rem;">
-          </div>
-
-          <div style="display:flex;gap:.75rem;margin-bottom:1rem;">
-            <input id="pos-prod-search" type="search" placeholder="Search or scan barcode…" style="flex:1;"
-              oninput="renderProductPalette();">
-          </div>
-          <div id="pos-product-palette" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:.75rem;max-height:360px;overflow-y:auto;"></div>
+      <div><div class="card">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem;">
+          <h2 style="margin:0;">Point of Sale</h2>
+          ${STATE.settings.enableBulkDiscount?`<div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;padding:.4rem .75rem;font-size:.8rem;color:#1e40af;font-weight:600;">✓ Bulk Discounts Active</div>`:''}
         </div>
-      </div>
+        <div class="form-grid" style="margin-bottom:1rem;">
+          <div><label>Warehouse</label><select id="pos-wh" style="width:100%;" onchange="posWarehouse=this.value;renderProductPalette();">${wOpts}</select></div>
+          <div><label>Customer</label><select id="pos-customer" style="width:100%;" onchange="onPOSCustomerChange()">${cOpts}</select></div>
+          <div><label>Sales Rep</label><select id="pos-rep" style="width:100%;">${rOpts}</select></div>
+          <div><label>Payment Method</label>
+            <select id="pos-payment" style="width:100%;">
+              <option value="cash">Cash</option><option value="transfer">Bank Transfer</option>
+              <option value="pos-machine">POS Machine</option><option value="credit">Credit (Invoice)</option>
+              <option value="cheque">Cheque</option><option value="split">Split Payment</option>
+            </select>
+          </div>
+        </div>
+        <div id="pos-loyalty-banner" style="display:none;background:#fdf4ff;border:1px solid #e9d5ff;border-radius:8px;padding:.75rem 1rem;margin-bottom:1rem;font-size:.875rem;"></div>
+        <input id="pos-prod-search" type="search" placeholder="Search or scan barcode…" style="width:100%;margin-bottom:1rem;" oninput="renderProductPalette();">
+        <div id="pos-product-palette" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:.75rem;max-height:360px;overflow-y:auto;"></div>
+      </div></div>
 
-      <!-- Cart Panel -->
       <div class="card" style="position:sticky;top:1rem;">
         <h3 style="margin-bottom:1rem;">🛒 Cart</h3>
         <div id="pos-cart-items" style="max-height:340px;overflow-y:auto;"></div>
-
-        <div id="pos-bulk-savings" style="display:none;background:#f0fdf4;border-radius:8px;
-          padding:.6rem 1rem;margin-top:.75rem;font-size:.8rem;color:#15803d;font-weight:600;"></div>
-
+        <div id="pos-bulk-savings" style="display:none;background:#f0fdf4;border-radius:8px;padding:.6rem 1rem;margin-top:.75rem;font-size:.8rem;color:#15803d;font-weight:600;"></div>
         <div style="border-top:1px solid #e5e7eb;margin-top:1rem;padding-top:1rem;">
-          <div style="display:flex;justify-content:space-between;margin-bottom:.5rem;color:#64748b;">
-            <span>Subtotal:</span><strong id="pos-subtotal">₦0.00</strong>
-          </div>
-          <div style="display:flex;justify-content:space-between;margin-bottom:.5rem;color:#16a34a;font-weight:600;"
-            id="pos-bulk-line" style="display:none;">
+          <div style="display:flex;justify-content:space-between;margin-bottom:.5rem;color:#64748b;"><span>Subtotal:</span><strong id="pos-subtotal">₦0.00</strong></div>
+          <div style="display:flex;justify-content:space-between;margin-bottom:.5rem;color:#16a34a;font-weight:600;display:none;" id="pos-bulk-line">
             <span>🏷 Bulk Discount:</span><strong id="pos-bulk-discount">₦0.00</strong>
           </div>
           <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:.5rem;">
             <label>Extra Discount (%):</label>
-            <input id="pos-discount" type="number" min="0" max="100" value="0"
-              style="width:80px;text-align:right;" oninput="updatePOSTotals()">
+            <input id="pos-discount" type="number" min="0" max="100" value="0" style="width:80px;text-align:right;" oninput="updatePOSTotals()">
           </div>
-          <div style="display:flex;justify-content:space-between;margin-bottom:.5rem;color:#64748b;">
-            <span>Tax (${STATE.settings.taxRate}%):</span><strong id="pos-tax">₦0.00</strong>
-          </div>
-          <div style="display:flex;justify-content:space-between;font-size:1.4rem;font-weight:700;
-            border-top:2px solid #e5e7eb;padding-top:.75rem;">
+          <div style="display:flex;justify-content:space-between;margin-bottom:.5rem;color:#64748b;"><span>Tax (${STATE.settings.taxRate}%):</span><strong id="pos-tax">₦0.00</strong></div>
+          <div style="display:flex;justify-content:space-between;font-size:1.4rem;font-weight:700;border-top:2px solid #e5e7eb;padding-top:.75rem;">
             <span>TOTAL:</span><span id="pos-total">₦0.00</span>
           </div>
         </div>
-
         <div style="margin-top:.5rem;">
           <label>Amount Tendered (₦):</label>
           <input id="pos-tendered" type="number" min="0" style="width:100%;margin-top:.25rem;" oninput="updateChange()">
-          <div id="pos-change-display" style="margin-top:.4rem;font-weight:600;color:#16a34a;"></div>
+          <div id="pos-change-display" style="margin-top:.4rem;font-weight:600;"></div>
         </div>
-
-        <!-- Loyalty points redemption -->
-        <div id="pos-loyalty-redeem" style="display:none;background:#fdf4ff;border-radius:8px;
-          padding:.6rem 1rem;margin-top:.75rem;">
+        <div id="pos-loyalty-redeem" style="display:none;background:#fdf4ff;border-radius:8px;padding:.6rem 1rem;margin-top:.75rem;">
           <label style="color:#7c3aed;">🌟 Redeem Loyalty Points</label>
           <div style="display:flex;gap:.5rem;margin-top:.4rem;">
-            <input id="pos-redeem-pts" type="number" min="0" placeholder="Points to redeem"
-              style="flex:1;" oninput="updatePOSTotals()">
+            <input id="pos-redeem-pts" type="number" min="0" placeholder="Points" style="flex:1;" oninput="updatePOSTotals()">
             <span id="pos-points-value" style="display:flex;align-items:center;color:#7c3aed;font-weight:600;font-size:.875rem;white-space:nowrap;"></span>
           </div>
         </div>
-
         <div style="margin-top:1rem;display:flex;gap:.75rem;flex-direction:column;">
           <button onclick="completeSale()" style="font-size:1rem;padding:.9rem;">✔ Complete Sale</button>
           <div style="display:flex;gap:.75rem;">
@@ -1078,393 +1110,276 @@ function renderPOS(){
         </div>
       </div>
     </div>`;
-
   renderProductPalette();
   renderCartItems();
 }
 
-function onPOSCustomerChange(){
-  const custId=$('#pos-customer')?.value;
-  const customer=STATE.customers.find(c=>c.id===custId);
-  const banner=$('#pos-loyalty-banner');
-  const redeemDiv=$('#pos-loyalty-redeem');
-  if(customer&&(customer.loyaltyPoints||0)>0){
-    const pts=customer.loyaltyPoints||0;
-    const val=pts*(STATE.settings.loyaltyRedemptionRate||100);
-    if(banner){banner.style.display='block';banner.innerHTML=`🌟 <strong>${customer.name}</strong> has <strong>${pts} loyalty points</strong> (worth ${fmt(val)}). Redeem below.`;}
-    if(redeemDiv){redeemDiv.style.display='block';}
+function onPOSCustomerChange() {
+  const c = STATE.customers.find(x => x.id === $('#pos-customer')?.value);
+  const banner = $('#pos-loyalty-banner'), rd = $('#pos-loyalty-redeem');
+  if (c && c.loyaltyPoints > 0) {
+    const val = c.loyaltyPoints * (STATE.settings.loyaltyRedemptionRate || 100);
+    if (banner) { banner.style.display='block'; banner.innerHTML=`🌟 <strong>${c.name}</strong> has <strong>${c.loyaltyPoints} pts</strong> (worth ${fmt(val)})`; }
+    if (rd) rd.style.display = 'block';
   } else {
-    if(banner)banner.style.display='none';
-    if(redeemDiv)redeemDiv.style.display='none';
+    if (banner) banner.style.display = 'none';
+    if (rd)     rd.style.display = 'none';
   }
 }
 
-function renderProductPalette(){
-  const search=($('#pos-prod-search')?.value||'').toLowerCase();
-  const wh=$('#pos-wh')?.value||posWarehouse;
-  posWarehouse=wh;
-  const filtered=STATE.products.filter(p=>
-    (p.stock[wh]||0)>0&&
-    (!search||p.name.toLowerCase().includes(search)||p.sku.toLowerCase().includes(search)||(p.barcode||'').includes(search))
+function renderProductPalette() {
+  const search = ($('#pos-prod-search')?.value || '').toLowerCase();
+  const wh = $('#pos-wh')?.value || posWarehouse;
+  posWarehouse = wh;
+  const list = STATE.products.filter(p =>
+    (p.stock[wh] || 0) > 0 &&
+    (!search || p.name.toLowerCase().includes(search) || (p.sku||'').toLowerCase().includes(search) || (p.barcode||'').includes(search))
   );
-  const pal=$('#pos-product-palette');
-  if(!pal)return;
-  pal.innerHTML=filtered.map(p=>{
-    const bulkLabel=getBulkDiscountLabel(p.id);
-    return `
-      <div onclick="addToCart('${p.id}')" style="
-        background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;
+  const pal = $('#pos-product-palette'); if (!pal) return;
+  pal.innerHTML = list.map(p => {
+    const tiers = STATE.bulkDiscountTiers.filter(t=>t.active&&(!t.productIds?.length||t.productIds.includes(p.id))).sort((a,b)=>a.minQty-b.minQty);
+    const label = tiers[0] ? `${tiers[0].discountPct}%@${tiers[0].minQty}+` : '';
+    return `<div onclick="addToCart('${p.id}')" style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;
         padding:1rem;cursor:pointer;transition:all .15s;user-select:none;position:relative;"
         onmouseover="this.style.background='#eff6ff';this.style.borderColor='#2563eb';"
         onmouseout="this.style.background='#f8fafc';this.style.borderColor='#e2e8f0';">
-        ${bulkLabel?`<div style="position:absolute;top:-8px;right:-8px;background:#16a34a;color:#fff;
-          border-radius:20px;font-size:.65rem;padding:.15rem .5rem;font-weight:700;">BULK ${bulkLabel}</div>`:''}
-        <div style="font-weight:600;font-size:.875rem;margin-bottom:.3rem;">${p.name}</div>
-        <div style="color:#2563eb;font-weight:700;">${fmt(p.sellingPrice)}</div>
-        <div style="font-size:.75rem;color:#64748b;margin-top:.3rem;">
-          Stock: ${fmtNum(p.stock[wh]||0)} ${p.unit}
-        </div>
-      </div>`;
-  }).join('')||
-    `<p style="color:#9ca3af;grid-column:1/-1;text-align:center;padding:2rem;">No products found in this warehouse.</p>`;
+      ${label?`<div style="position:absolute;top:-8px;right:-8px;background:#16a34a;color:#fff;border-radius:20px;font-size:.65rem;padding:.15rem .5rem;font-weight:700;">BULK ${label}</div>`:''}
+      <div style="font-weight:600;font-size:.875rem;">${p.name}</div>
+      <div style="color:#2563eb;font-weight:700;">${fmt(p.sellingPrice)}</div>
+      <div style="font-size:.75rem;color:#64748b;margin-top:.3rem;">Stock: ${fmtNum(p.stock[wh]||0)} ${p.unit}</div>
+    </div>`;
+  }).join('') || `<p style="color:#9ca3af;grid-column:1/-1;text-align:center;padding:2rem;">No products in this warehouse.</p>`;
 }
 
-function getBulkDiscountLabel(productId){
-  const activeTiers=STATE.bulkDiscountTiers.filter(t=>t.active&&(t.productIds.length===0||t.productIds.includes(productId)));
-  if(!activeTiers.length)return null;
-  const best=activeTiers.sort((a,b)=>a.minQty-b.minQty)[0];
-  return `${best.discountPct}%@${best.minQty}+`;
-}
-
-function addToCart(productId){
-  const product=STATE.products.find(p=>p.id===productId);if(!product)return;
-  const existing=posCart.find(item=>item.productId===productId);
-  const wh=posWarehouse;
-  if(existing){
-    if(existing.qty>=(product.stock[wh]||0))return toast('Not enough stock.','warn');
+function addToCart(productId) {
+  const product = STATE.products.find(p => p.id === productId); if (!product) return;
+  const existing = posCart.find(i => i.productId === productId);
+  if (existing) {
+    if (existing.qty >= (product.stock[posWarehouse]||0)) return toast('Not enough stock.','warn');
     existing.qty++;
   } else {
-    if((product.stock[wh]||0)===0)return toast('Out of stock in this warehouse.','warn');
-    posCart.push({
-      productId,name:product.name,unit:product.unit,
-      unitPrice:product.sellingPrice,costPrice:product.costPrice,qty:1,
-      manualDiscountPct:0,
-    });
+    if (!(product.stock[posWarehouse]||0)) return toast('Out of stock.','warn');
+    posCart.push({ productId, name: product.name, unit: product.unit, unitPrice: product.sellingPrice, costPrice: product.costPrice, qty: 1, manualDiscountPct: 0 });
   }
-  renderCartItems();
-  updatePOSTotals();
+  renderCartItems(); updatePOSTotals();
 }
 
-function renderCartItems(){
-  const wrap=$('#pos-cart-items');
-  if(!wrap)return;
-  if(!posCart.length){wrap.innerHTML='<p style="color:#9ca3af;text-align:center;padding:1rem;">Cart is empty.</p>';return;}
-  wrap.innerHTML=posCart.map((item,i)=>{
-    const bulkPct=getBulkDiscount(item.productId,item.qty);
-    const effectiveDisc=Math.max(bulkPct,item.manualDiscountPct||0);
-    const lineTotal=item.qty*item.unitPrice*(1-effectiveDisc/100);
-    const nextTier=getNextBulkTier(item.productId,item.qty);
-    return `
-      <div style="padding:.6rem 0;border-bottom:1px solid #f3f4f6;">
-        <div style="display:flex;align-items:center;gap:.5rem;">
-          <div style="flex:1;font-size:.875rem;">
-            <div style="font-weight:600;">${item.name}</div>
-            <div style="color:#64748b;font-size:.8rem;">${fmt(item.unitPrice)} / ${item.unit}</div>
-          </div>
-          <div style="display:flex;align-items:center;gap:.25rem;">
-            <button onclick="changeQty(${i},-1)" style="width:26px;height:26px;padding:0;text-align:center;font-size:.9rem;">−</button>
-            <input type="number" value="${item.qty}" min="1" style="width:52px;text-align:center;padding:.2rem;font-size:.875rem;"
-              onchange="setQty(${i},this.value)">
-            <button onclick="changeQty(${i},1)" style="width:26px;height:26px;padding:0;text-align:center;font-size:.9rem;">+</button>
-          </div>
-          <div style="min-width:85px;text-align:right;font-weight:700;">${fmt(lineTotal)}</div>
-          <button onclick="removeCartItem(${i})" style="background:#fee2e2;color:#dc2626;border:none;
-            width:26px;height:26px;border-radius:6px;cursor:pointer;font-size:.85rem;padding:0;">×</button>
+function renderCartItems() {
+  const wrap = $('#pos-cart-items'); if (!wrap) return;
+  if (!posCart.length) { wrap.innerHTML='<p style="color:#9ca3af;text-align:center;padding:1rem;">Cart is empty.</p>'; return; }
+  wrap.innerHTML = posCart.map((item,i) => {
+    const bulk = getBulkDiscount(item.productId, item.qty);
+    const eff  = Math.max(bulk, item.manualDiscountPct||0);
+    const line = item.qty * item.unitPrice * (1-eff/100);
+    const next = getNextBulkTier(item.productId, item.qty);
+    return `<div style="padding:.6rem 0;border-bottom:1px solid #f3f4f6;">
+      <div style="display:flex;align-items:center;gap:.5rem;">
+        <div style="flex:1;font-size:.875rem;">
+          <div style="font-weight:600;">${item.name}</div>
+          <div style="color:#64748b;font-size:.8rem;">${fmt(item.unitPrice)} / ${item.unit}</div>
         </div>
-
-        <!-- Discount row -->
-        <div style="display:flex;align-items:center;gap:.5rem;margin-top:.4rem;flex-wrap:wrap;">
-          ${bulkPct>0?`
-            <span style="background:#d1fae5;color:#065f46;border-radius:20px;font-size:.72rem;
-              padding:.15rem .6rem;font-weight:700;">🏷 ${bulkPct}% bulk discount</span>`:''
-          }
-          <div style="display:flex;align-items:center;gap:.3rem;margin-left:auto;">
-            <span style="font-size:.75rem;color:#64748b;">Extra %:</span>
-            <input type="number" min="0" max="100" value="${item.manualDiscountPct||0}"
-              style="width:50px;font-size:.78rem;padding:.15rem .3rem;text-align:center;"
-              onchange="setItemDiscount(${i},this.value)" placeholder="0">
-          </div>
+        <div style="display:flex;align-items:center;gap:.25rem;">
+          <button onclick="changeQty(${i},-1)" style="width:26px;height:26px;padding:0;text-align:center;">−</button>
+          <input type="number" value="${item.qty}" min="1" style="width:52px;text-align:center;padding:.2rem;" onchange="setQty(${i},this.value)">
+          <button onclick="changeQty(${i},1)"  style="width:26px;height:26px;padding:0;text-align:center;">+</button>
         </div>
-
-        <!-- Upsell nudge -->
-        ${nextTier&&STATE.settings.enableBulkDiscount?`
-          <div style="margin-top:.35rem;font-size:.75rem;color:#b45309;background:#fef9c3;
-            border-radius:6px;padding:.25rem .6rem;">
-            💡 Add ${nextTier.minQty-item.qty} more → get <strong>${nextTier.discountPct}% off</strong> (${nextTier.name})
-          </div>`:''}
-      </div>`;
+        <div style="min-width:85px;text-align:right;font-weight:700;">${fmt(line)}</div>
+        <button onclick="removeCartItem(${i})" style="background:#fee2e2;color:#dc2626;border:none;width:26px;height:26px;border-radius:6px;cursor:pointer;">×</button>
+      </div>
+      <div style="display:flex;align-items:center;gap:.5rem;margin-top:.4rem;flex-wrap:wrap;">
+        ${bulk>0?`<span style="background:#d1fae5;color:#065f46;border-radius:20px;font-size:.72rem;padding:.15rem .6rem;font-weight:700;">🏷 ${bulk}% bulk</span>`:''}
+        <div style="display:flex;align-items:center;gap:.3rem;margin-left:auto;">
+          <span style="font-size:.75rem;color:#64748b;">Extra %:</span>
+          <input type="number" min="0" max="100" value="${item.manualDiscountPct||0}"
+            style="width:50px;font-size:.78rem;padding:.15rem .3rem;text-align:center;"
+            onchange="setItemDiscount(${i},this.value)">
+        </div>
+      </div>
+      ${next&&STATE.settings.enableBulkDiscount?`<div style="margin-top:.35rem;font-size:.75rem;color:#b45309;background:#fef9c3;border-radius:6px;padding:.25rem .6rem;">
+        💡 Add ${next.minQty-item.qty} more → get <strong>${next.discountPct}% off</strong></div>`:''}
+    </div>`;
   }).join('');
 }
 
-function setItemDiscount(i, val){
-  posCart[i].manualDiscountPct=Math.max(0,Math.min(100,parseFloat(val)||0));
+function setItemDiscount(i,v){ posCart[i].manualDiscountPct=Math.max(0,Math.min(100,parseFloat(v)||0)); renderCartItems(); updatePOSTotals(); }
+function changeQty(i,d){
+  posCart[i].qty=Math.max(1,posCart[i].qty+d);
+  const p=STATE.products.find(x=>x.id===posCart[i].productId);
+  if(p&&posCart[i].qty>(p.stock[posWarehouse]||0)){posCart[i].qty--;return toast('Not enough stock.','warn');}
   renderCartItems(); updatePOSTotals();
 }
+function setQty(i,v){ posCart[i].qty=Math.max(1,parseInt(v)||1); renderCartItems(); updatePOSTotals(); }
+function removeCartItem(i){ posCart.splice(i,1); renderCartItems(); updatePOSTotals(); }
+function clearCart(){ posCart=[]; renderCartItems(); updatePOSTotals(); }
 
-function changeQty(i,delta){
-  posCart[i].qty=Math.max(1,posCart[i].qty+delta);
-  const product=STATE.products.find(p=>p.id===posCart[i].productId);
-  if(product&&posCart[i].qty>(product.stock[posWarehouse]||0)){
-    posCart[i].qty--; return toast('Not enough stock.','warn');
-  }
-  renderCartItems(); updatePOSTotals();
-}
-function setQty(i,val){
-  posCart[i].qty=Math.max(1,parseInt(val)||1);
-  renderCartItems(); updatePOSTotals();
-}
-function removeCartItem(i){posCart.splice(i,1);renderCartItems();updatePOSTotals();}
-function clearCart(){posCart=[];renderCartItems();updatePOSTotals();}
-
-function updatePOSTotals(){
-  let subtotal=0, totalBulkSaving=0, totalManualDisc=0;
+function updatePOSTotals() {
+  let subtotal=0, bulkSaving=0;
   posCart.forEach(item=>{
     const base=item.qty*item.unitPrice;
-    const bulkPct=getBulkDiscount(item.productId,item.qty);
-    const manualPct=item.manualDiscountPct||0;
-    const effectivePct=Math.max(bulkPct,manualPct);
-    const discAmt=base*(effectivePct/100);
-    if(bulkPct>0) totalBulkSaving+=base*(bulkPct/100);
-    if(manualPct>0&&manualPct>bulkPct) totalManualDisc+=discAmt;
-    subtotal+=(base-discAmt);
+    const bulk=getBulkDiscount(item.productId,item.qty);
+    const eff=Math.max(bulk,item.manualDiscountPct||0);
+    if(bulk>0) bulkSaving+=base*(bulk/100);
+    subtotal+=base*(1-eff/100);
   });
-
-  // Extra manual discount on total
-  const extraDiscPct=parseFloat($('#pos-discount')?.value)||0;
-  const extraDiscAmt=subtotal*(extraDiscPct/100);
-  const afterDisc=subtotal-extraDiscAmt;
-
-  // Loyalty point redemption
+  const extraPct=parseFloat($('#pos-discount')?.value)||0;
+  const afterDisc=subtotal*(1-extraPct/100);
   const custId=$('#pos-customer')?.value;
-  const customer=STATE.customers.find(c=>c.id===custId);
+  const cust=STATE.customers.find(c=>c.id===custId);
   let redeemVal=0;
-  const redeemPtsEl=$('#pos-redeem-pts');
-  if(redeemPtsEl&&customer){
-    const pts=Math.min(parseFloat(redeemPtsEl.value)||0,customer.loyaltyPoints||0);
+  const rEl=$('#pos-redeem-pts');
+  if(rEl&&cust){
+    const pts=Math.min(parseFloat(rEl.value)||0, cust.loyaltyPoints||0);
     redeemVal=pts*(STATE.settings.loyaltyRedemptionRate||100);
-    const pvEl=$('#pos-points-value');
-    if(pvEl) pvEl.textContent=pts>0?`= ${fmt(redeemVal)}`:'';
+    const pv=$('#pos-points-value'); if(pv) pv.textContent=pts>0?`= ${fmt(redeemVal)}`:'';
   }
-
   const tax=afterDisc*STATE.settings.taxRate/100;
   const total=Math.max(0,afterDisc+tax-redeemVal);
-
   if($('#pos-subtotal')) $('#pos-subtotal').textContent=fmt(subtotal);
   if($('#pos-tax'))      $('#pos-tax').textContent=fmt(tax);
   if($('#pos-total'))    $('#pos-total').textContent=fmt(total);
-
-  // Bulk savings banner
-  const savingsDiv=$('#pos-bulk-savings');
-  const bulkLine=$('#pos-bulk-line');
-  const bulkDiscEl=$('#pos-bulk-discount');
-  if(savingsDiv){
-    if(totalBulkSaving>0){
-      savingsDiv.style.display='block';
-      savingsDiv.textContent=`🏷 Bulk discounts saving customer ${fmt(totalBulkSaving)} on this order!`;
-    } else { savingsDiv.style.display='none'; }
-  }
-  if(bulkLine) bulkLine.style.display=totalBulkSaving>0?'flex':'none';
-  if(bulkDiscEl) bulkDiscEl.textContent='-'+fmt(totalBulkSaving);
-
+  const sv=$('#pos-bulk-savings'), bl=$('#pos-bulk-line');
+  if(sv){sv.style.display=bulkSaving>0?'block':'none'; sv.textContent=`🏷 Bulk saving: ${fmt(bulkSaving)}`;}
+  if(bl) bl.style.display=bulkSaving>0?'flex':'none';
+  if($('#pos-bulk-discount')) $('#pos-bulk-discount').textContent='-'+fmt(bulkSaving);
   updateChange();
 }
-
 function updateChange(){
   const tendered=parseFloat($('#pos-tendered')?.value)||0;
-  const totalEl=$('#pos-total');
-  if(!totalEl)return;
-  const total=parseFloat(totalEl.textContent.replace(/[^0-9.]/g,''))||0;
-  const changeDiv=$('#pos-change-display');
-  if(!changeDiv)return;
-  if(tendered>0){
-    const change=tendered-total;
-    changeDiv.style.color=change>=0?'#16a34a':'#dc2626';
-    changeDiv.textContent=change>=0?`Change: ${fmt(change)}`:`Balance Due: ${fmt(Math.abs(change))}`;
-  } else { changeDiv.textContent=''; }
+  const total=parseFloat($('#pos-total')?.textContent?.replace(/[^0-9.]/g,'')||'0');
+  const cd=$('#pos-change-display'); if(!cd)return;
+  if(tendered>0){ const ch=tendered-total; cd.style.color=ch>=0?'#16a34a':'#dc2626'; cd.textContent=ch>=0?`Change: ${fmt(ch)}`:`Balance Due: ${fmt(Math.abs(ch))}`; }
+  else cd.textContent='';
 }
 
-function completeSale(){
-  if(!posCart.length)return toast('Cart is empty.','warn');
+async function completeSale() {
+  if (!posCart.length) return toast('Cart is empty.', 'warn');
 
-  let subtotal=0,totalBulkDisc=0,totalManualDisc=0;
-  const items=posCart.map(item=>{
+  let subtotal=0, totalDiscount=0, bulkDiscount=0;
+  const saleItems = posCart.map(item => {
     const base=item.qty*item.unitPrice;
-    const bulkPct=getBulkDiscount(item.productId,item.qty);
-    const manualPct=item.manualDiscountPct||0;
-    const effectivePct=Math.max(bulkPct,manualPct);
-    const discAmt=base*(effectivePct/100);
-    if(bulkPct>0) totalBulkDisc+=base*(bulkPct/100);
-    if(manualPct>0) totalManualDisc+=base*(manualPct/100);
-    subtotal+=(base-discAmt);
-    return {...item, bulkDiscountPct:bulkPct, effectiveDiscountPct:effectivePct, lineDiscount:discAmt };
+    const bulk=getBulkDiscount(item.productId,item.qty);
+    const eff=Math.max(bulk,item.manualDiscountPct||0);
+    const discAmt=base*(eff/100);
+    totalDiscount+=discAmt; if(bulk>0) bulkDiscount+=base*(bulk/100);
+    subtotal+=base-discAmt;
+    return { productId:item.productId, qty:item.qty, price:item.unitPrice, discount:eff, total:(base-discAmt) };
   });
 
-  const extraDiscPct=parseFloat($('#pos-discount')?.value)||0;
-  const extraDiscAmt=subtotal*(extraDiscPct/100);
+  const extraPct=parseFloat($('#pos-discount')?.value)||0;
+  const extraDiscAmt=subtotal*(extraPct/100);
   const afterDisc=subtotal-extraDiscAmt;
   const tax=afterDisc*STATE.settings.taxRate/100;
 
   const custId=$('#pos-customer')?.value||'';
-  const customer=STATE.customers.find(c=>c.id===custId);
-  let redeemVal=0, redeemPts=0;
-  if(customer){
-    const redeemPtsEl=$('#pos-redeem-pts');
-    redeemPts=Math.min(parseFloat(redeemPtsEl?.value)||0,customer.loyaltyPoints||0);
+  const cust=STATE.customers.find(c=>c.id===custId);
+  let redeemPts=0, redeemVal=0;
+  if(cust){
+    const rEl=$('#pos-redeem-pts');
+    redeemPts=Math.min(parseFloat(rEl?.value)||0, cust.loyaltyPoints||0);
     redeemVal=redeemPts*(STATE.settings.loyaltyRedemptionRate||100);
   }
-
   const total=Math.max(0,afterDisc+tax-redeemVal);
   const payment=$('#pos-payment')?.value||'cash';
   const repId=$('#pos-rep')?.value||'';
-  const rep=STATE.salesReps.find(r=>r.id===repId);
-
-  if(payment==='credit'&&customer){
-    const newBalance=(customer.balance||0)+total;
-    if(newBalance>customer.creditLimit)
-      return toast(`Credit limit of ${fmt(customer.creditLimit)} would be exceeded.`,'error');
-  }
-
   const isCredit=payment==='credit';
-  const receiptNo=isCredit?nextInvoiceNo():nextReceiptNo();
-  const totalDiscountAmt=totalBulkDisc+totalManualDisc+extraDiscAmt;
 
-  const sale={
-    id:uid(),
-    receiptNo:isCredit?null:receiptNo,
-    invoiceNo:isCredit?receiptNo:null,
-    customerId:custId,
-    customerName:customer?customer.name:'Walk-in',
-    repId, repName:rep?.name||'',
-    warehouseId:posWarehouse,
-    items,
-    subtotal:posCart.reduce((s,i)=>s+i.qty*i.unitPrice,0),
-    totalBulkDisc, totalManualDisc, extraDiscPct, extraDiscAmt,
-    totalDiscountAmt,
-    taxAmt:tax, total,
-    redeemPts, redeemVal,
-    paymentMethod:payment,
-    paymentStatus:isCredit?'unpaid':'paid',
-    date:nowISO(), notes:'',
+  if(isCredit&&cust&&(cust.balance||0)+total>cust.creditLimit)
+    return toast(`Credit limit of ${fmt(cust.creditLimit)} would be exceeded.`,'error');
+
+  const pointsEarned=Math.floor(total/1000*(STATE.settings.loyaltyPointsRate||1));
+  const receiptNo = isCredit ? nextInvoiceNo() : nextReceiptNo();
+
+  const payload = {
+    receiptNo,
+    invoiceNo:      isCredit ? receiptNo : null,
+    customerId:     custId || null,
+    salesRepId:     repId  || null,
+    warehouseId:    posWarehouse || null,
+    items:          saleItems,
+    subtotal:       posCart.reduce((s,i)=>s+i.qty*i.unitPrice,0),
+    discount:       totalDiscount + extraDiscAmt,
+    tax,
+    total,
+    paymentMethod:  payment,
+    paymentStatus:  isCredit ? 'unpaid' : 'paid',
+    pointsEarned,
+    pointsRedeemed: redeemPts,
+    note:           '',
   };
 
-  // Deduct stock
-  items.forEach(item=>{
-    const product=STATE.products.find(p=>p.id===item.productId);
-    if(product) product.stock[posWarehouse]=Math.max(0,(product.stock[posWarehouse]||0)-item.qty);
-  });
+  showLoading('Processing sale…');
+  try {
+    const result = await API.createSale(payload);
+    const discMsg = (totalDiscount+extraDiscAmt)>0 ? ` (saved ${fmt(totalDiscount+extraDiscAmt)})` : '';
+    toast(`${isCredit?'Invoice':'Receipt'} ${receiptNo} recorded. Total: ${fmt(total)}${discMsg}`, 'success');
 
-  // Update customer
-  if(customer){
-    customer.totalPurchases=(customer.totalPurchases||0)+total;
-    if(isCredit) customer.balance=(customer.balance||0)+total;
-    // Award loyalty points
-    const newPts=Math.floor(total/1000*(STATE.settings.loyaltyPointsRate||1));
-    customer.loyaltyPoints=(customer.loyaltyPoints||0)+newPts-redeemPts;
-    if(redeemPts>0||newPts>0){
-      STATE.loyaltyTransactions.push({
-        date:nowISO(), customerId:custId, customerName:customer.name,
-        earned:newPts, redeemed:redeemPts, balance:customer.loyaltyPoints,
-        saleRef:receiptNo
-      });
-    }
-  }
-  if(rep) rep.totalSales=(rep.totalSales||0)+total;
-
-  STATE.sales.push(sale);
-  saveState();
-  const discMsg=totalDiscountAmt>0?` (saved ${fmt(totalDiscountAmt)})`:'';
-  toast(`Sale ${receiptNo} recorded. Total: ${fmt(total)}${discMsg}`,'success');
-  printReceipt(sale);
-  clearCart();
-  renderDashboard();
+    const localSale = {
+      ...payload, id: result?.id || result?.sale?.id || uid(),
+      customerName: cust?.name||'Walk-in',
+      repName: STATE.salesReps.find(r=>r.id===repId)?.name||'',
+      items: posCart.map((item,i)=>({...item,...saleItems[i], lineDiscount: saleItems[i].total*saleItems[i].discount/100, effectiveDiscountPct: saleItems[i].discount })),
+      totalDiscountAmt: totalDiscount+extraDiscAmt, taxAmt: tax, redeemVal,
+    };
+    printReceipt(localSale);
+    clearCart();
+    await loadAllData();
+    renderDashboard();
+  } catch(e) { toast(e.message, 'error'); }
+  finally { hideLoading(); }
 }
 
-function saveAsQuote(){
-  if(!posCart.length)return toast('Cart is empty.','warn');
+async function saveAsQuote() {
+  if (!posCart.length) return toast('Cart is empty.', 'warn');
   const custId=$('#pos-customer')?.value||'';
-  const customer=STATE.customers.find(c=>c.id===custId);
+  const extraPct=parseFloat($('#pos-discount')?.value)||0;
+
   const items=posCart.map(item=>{
-    const bulkPct=getBulkDiscount(item.productId,item.qty);
-    const manualPct=item.manualDiscountPct||0;
-    const effectivePct=Math.max(bulkPct,manualPct);
-    return {...item,bulkDiscountPct:bulkPct,effectiveDiscountPct:effectivePct};
+    const bulk=getBulkDiscount(item.productId,item.qty);
+    const eff=Math.max(bulk,item.manualDiscountPct||0);
+    return { productId:item.productId, qty:item.qty, price:item.unitPrice, discount:eff, total:item.qty*item.unitPrice*(1-eff/100) };
   });
-  const subtotal=items.reduce((s,i)=>s+i.qty*i.unitPrice*(1-i.effectiveDiscountPct/100),0);
-  const tax=subtotal*STATE.settings.taxRate/100;
-  const extraDiscPct=parseFloat($('#pos-discount')?.value)||0;
-  const total=subtotal*(1-extraDiscPct/100)+tax;
+  const subtotal=items.reduce((s,i)=>s+i.total,0);
+  const afterDisc=subtotal*(1-extraPct/100);
+  const tax=afterDisc*STATE.settings.taxRate/100;
+  const total=afterDisc+tax;
   const qNo=nextQuoteNo();
-  STATE.quotes.push({
-    id:uid(), quoteNo:qNo, customerId:custId,
-    customerName:customer?customer.name:'Walk-in',
-    warehouseId:posWarehouse, items, subtotal, extraDiscPct, taxAmt:tax, total,
-    status:'pending', validDays:7, date:nowISO(), notes:'',
-  });
-  saveState();
-  toast(`Quote ${qNo} saved.`,'success');
+  const validUntil=new Date(Date.now()+7*86400000).toISOString();
+
+  await API.createQuote({ quoteNo:qNo, customerId:custId||null, items, subtotal, discount:extraPct, tax, total, validUntil, note:'', status:'PENDING' });
+  toast(`Quote ${qNo} saved.`, 'success');
 }
 
-function printReceipt(sale){
-  const win=window.open('','_blank','width=420,height=700');
-  if(!win)return;
+function printReceipt(sale) {
+  const win=window.open('','_blank','width=420,height=700'); if(!win)return;
   const s=STATE.settings;
-  const itemsHTML=sale.items.map(i=>{
-    const lineBase=i.qty*i.unitPrice;
-    const discLine=i.effectiveDiscountPct>0?`
-      <tr><td colspan="3" style="font-size:10px;color:#555;">
-        Discount ${i.effectiveDiscountPct}%${i.bulkDiscountPct>0?' (bulk)':''}:
-      </td><td style="text-align:right;font-size:10px;color:#555;">-${fmt(i.lineDiscount||0)}</td></tr>`:'';
-    return `
-      <tr>
-        <td>${i.name}</td>
-        <td style="text-align:center;">${i.qty} ${i.unit}</td>
-        <td style="text-align:right;">${fmt(i.unitPrice)}</td>
-        <td style="text-align:right;">${fmt(lineBase-(i.lineDiscount||0))}</td>
-      </tr>${discLine}`;
+  const itemsHTML=(sale.items||[]).map(i=>{
+    const base=i.qty*(i.unitPrice||i.price||0);
+    const disc=i.effectiveDiscountPct||i.discount||0;
+    const discLine=disc>0?`<tr><td colspan="3" style="font-size:10px;color:#555;">Discount ${disc}%:</td><td style="text-align:right;font-size:10px;color:#555;">-${fmt(base*disc/100)}</td></tr>`:'';
+    return `<tr><td>${i.name}</td><td style="text-align:center;">${i.qty} ${i.unit||''}</td><td style="text-align:right;">${fmt(i.unitPrice||i.price||0)}</td><td style="text-align:right;">${fmt(i.total||base)}</td></tr>${discLine}`;
   }).join('');
-
   win.document.write(`<!DOCTYPE html><html><head><title>Receipt</title>
-    <style>
-      body { font-family:'Courier New',monospace;font-size:12px;max-width:340px;margin:0 auto;padding:1rem; }
-      h2{text-align:center;font-size:14px;}.center{text-align:center;}
-      table{width:100%;border-collapse:collapse;}td{padding:2px 0;}
-      .sep{border-top:1px dashed #000;margin:6px 0;}.total{font-size:15px;font-weight:bold;}
-      @media print{button{display:none;}}
-    </style></head><body>
-    <h2>${s.companyName}</h2>
-    <p class="center">${s.address}</p>
-    <p class="center">${s.phone}</p>
+    <style>body{font-family:'Courier New',monospace;font-size:12px;max-width:340px;margin:0 auto;padding:1rem;}
+    h2{text-align:center;font-size:14px;}.center{text-align:center;}table{width:100%;border-collapse:collapse;}td{padding:2px 0;}
+    .sep{border-top:1px dashed #000;margin:6px 0;}.total{font-size:15px;font-weight:bold;}@media print{button{display:none;}}</style>
+    </head><body>
+    <h2>${s.companyName}</h2><p class="center">${s.address}</p><p class="center">${s.phone}</p>
     <div class="sep"></div>
     <p><strong>${sale.invoiceNo?'INVOICE':'RECEIPT'}:</strong> ${sale.invoiceNo||sale.receiptNo}</p>
-    <p><strong>Date:</strong> ${fmtDate(sale.date)}</p>
-    <p><strong>Customer:</strong> ${sale.customerName}</p>
-    <p><strong>Payment:</strong> ${sale.paymentMethod.toUpperCase()}</p>
+    <p><strong>Date:</strong> ${fmtDate(sale.date||nowISO())}</p>
+    <p><strong>Customer:</strong> ${sale.customerName||'Walk-in'}</p>
+    <p><strong>Payment:</strong> ${(sale.paymentMethod||'').toUpperCase()}</p>
     ${sale.repName?`<p><strong>Rep:</strong> ${sale.repName}</p>`:''}
     <div class="sep"></div>
-    <table>
-      <thead><tr><th>Item</th><th>Qty</th><th>Price</th><th>Total</th></tr></thead>
-      <tbody>${itemsHTML}</tbody>
-    </table>
+    <table><thead><tr><th>Item</th><th>Qty</th><th>Price</th><th>Total</th></tr></thead><tbody>${itemsHTML}</tbody></table>
     <div class="sep"></div>
     <table>
-      <tr><td>Gross Total:</td><td style="text-align:right;">${fmt(sale.subtotal)}</td></tr>
-      ${(sale.totalDiscountAmt||0)>0?`<tr><td>Total Discount:</td><td style="text-align:right;color:#16a34a;">-${fmt(sale.totalDiscountAmt)}</td></tr>`:''}
-      ${(sale.extraDiscPct||0)>0?`<tr><td>Extra Discount (${sale.extraDiscPct}%):</td><td style="text-align:right;">-${fmt(sale.extraDiscAmt)}</td></tr>`:''}
-      <tr><td>Tax (${s.taxRate}%):</td><td style="text-align:right;">${fmt(sale.taxAmt)}</td></tr>
-      ${(sale.redeemVal||0)>0?`<tr><td>Loyalty Points Redeemed (${sale.redeemPts} pts):</td><td style="text-align:right;color:#7c3aed;">-${fmt(sale.redeemVal)}</td></tr>`:''}
+      <tr><td>Subtotal:</td><td style="text-align:right;">${fmt(sale.subtotal||0)}</td></tr>
+      ${(sale.totalDiscountAmt||sale.discount||0)>0?`<tr><td>Discounts:</td><td style="text-align:right;color:#16a34a;">-${fmt(sale.totalDiscountAmt||sale.discount||0)}</td></tr>`:''}
+      <tr><td>Tax (${s.taxRate}%):</td><td style="text-align:right;">${fmt(sale.taxAmt||sale.tax||0)}</td></tr>
+      ${(sale.redeemVal||0)>0?`<tr><td>Points Redeemed:</td><td style="text-align:right;color:#7c3aed;">-${fmt(sale.redeemVal)}</td></tr>`:''}
       <tr class="total"><td>TOTAL:</td><td style="text-align:right;">${fmt(sale.total)}</td></tr>
     </table>
-    ${(sale.totalDiscountAmt||0)>0?`<p style="text-align:center;font-size:11px;">You saved ${fmt(sale.totalDiscountAmt)} on this purchase!</p>`:''}
     <div class="sep"></div>
     <p class="center">Thank you for your business!</p>
     <p class="center" style="font-size:10px;">${s.email}</p>
@@ -1474,20 +1389,17 @@ function printReceipt(sale){
 }
 
 /* ════════════════════════════════════════════════════════════════
-   9.  CUSTOMERS  (enhanced with loyalty)
+   10. CUSTOMERS
    ════════════════════════════════════════════════════════════════ */
-function renderCustomers(){
-  const sec=$('#customers');
-  sec.innerHTML=`
+function renderCustomers() {
+  $('#customers').innerHTML = `
     <div class="card">
       <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:.75rem;margin-bottom:1.5rem;">
         <h2 style="margin:0;">Customers</h2>
         <div style="display:flex;gap:.75rem;flex-wrap:wrap;">
           <input id="cust-search" type="search" placeholder="Search…" style="width:200px;" oninput="renderCustomersTable()">
           <select id="cust-type-filter" style="width:140px;" onchange="renderCustomersTable()">
-            <option value="">All Types</option>
-            <option value="retail">Retail</option>
-            <option value="wholesale">Wholesale</option>
+            <option value="">All Types</option><option value="retail">Retail</option><option value="wholesale">Wholesale</option>
           </select>
           <button onclick="openAddCustomer()">+ Add Customer</button>
           <button onclick="exportCustomersXLSX()" style="background:#16a34a;">⬇ Export</button>
@@ -1498,429 +1410,349 @@ function renderCustomers(){
   renderCustomersTable();
 }
 
-function renderCustomersTable(){
+function renderCustomersTable() {
   const search=($('#cust-search')?.value||'').toLowerCase();
-  const typeFilter=$('#cust-type-filter')?.value||'';
-  const filtered=STATE.customers.filter(c=>
-    (!typeFilter||c.customerType===typeFilter)&&
-    (c.name.toLowerCase().includes(search)||c.phone.includes(search)||(c.email||'').toLowerCase().includes(search))
-  );
-  const wrap=$('#customers-table-wrap');
-  if(!wrap)return;
-  if(!filtered.length){wrap.innerHTML='<p style="color:#9ca3af;text-align:center;padding:2rem;">No customers.</p>';return;}
-  wrap.innerHTML=`
-    <table>
-      <thead><tr>
-        <th>Name</th><th>Type</th><th>Phone</th><th>Credit Limit</th><th>Balance</th>
-        <th>Loyalty Pts</th><th>Total Purchases</th><th>Actions</th>
-      </tr></thead>
-      <tbody>${filtered.map(c=>`
-        <tr>
-          <td><strong>${c.name}</strong><br><small style="color:#9ca3af;">${c.address||''}</small></td>
-          <td><span class="badge badge-${c.customerType==='wholesale'?'blue':'green'}">${c.customerType||'retail'}</span></td>
-          <td>${c.phone}</td>
-          <td>${fmt(c.creditLimit)}</td>
-          <td style="color:${(c.balance||0)>0?'#dc2626':'#16a34a'};font-weight:700;">${fmt(c.balance||0)}</td>
-          <td><span style="color:#7c3aed;font-weight:600;">🌟 ${fmtNum(c.loyaltyPoints||0)}</span></td>
-          <td>${fmt(c.totalPurchases||0)}</td>
-          <td style="white-space:nowrap;">
-            <button onclick="editCustomer('${c.id}')" style="font-size:.8rem;padding:.3rem .6rem;background:#6b7280;margin-right:.3rem;">Edit</button>
-            <button onclick="recordPayment('${c.id}')" style="font-size:.8rem;padding:.3rem .6rem;background:#16a34a;margin-right:.3rem;">Pay</button>
-            <button onclick="viewCustomerHistory('${c.id}')" style="font-size:.8rem;padding:.3rem .6rem;background:#0891b2;margin-right:.3rem;">History</button>
-            <button onclick="deleteCustomer('${c.id}')" class="danger" style="font-size:.8rem;padding:.3rem .6rem;">Del</button>
-          </td>
-        </tr>`).join('')}
-      </tbody>
-    </table>`;
+  const tf=$('#cust-type-filter')?.value||'';
+  const list=STATE.customers.filter(c=>(!tf||c.customerType===tf)&&(c.name.toLowerCase().includes(search)||(c.phone||'').includes(search)||(c.email||'').toLowerCase().includes(search)));
+  const wrap=$('#customers-table-wrap'); if(!wrap)return;
+  if(!list.length){wrap.innerHTML='<p style="color:#9ca3af;text-align:center;padding:2rem;">No customers.</p>';return;}
+  wrap.innerHTML=`<table>
+    <thead><tr><th>Name</th><th>Type</th><th>Phone</th><th>Credit Limit</th><th>Balance</th><th>Loyalty Pts</th><th>Total Purchases</th><th>Actions</th></tr></thead>
+    <tbody>${list.map(c=>`<tr>
+      <td><strong>${c.name}</strong><br><small style="color:#9ca3af;">${c.address||''}</small></td>
+      <td><span class="badge badge-${c.customerType==='wholesale'?'blue':'green'}">${c.customerType||'retail'}</span></td>
+      <td>${c.phone||'—'}</td><td>${fmt(c.creditLimit)}</td>
+      <td style="color:${(c.balance||0)>0?'#dc2626':'#16a34a'};font-weight:700;">${fmt(c.balance||0)}</td>
+      <td><span style="color:#7c3aed;font-weight:600;">🌟 ${fmtNum(c.loyaltyPoints||0)}</span></td>
+      <td>${fmt(c.totalPurchases||0)}</td>
+      <td style="white-space:nowrap;">
+        <button onclick="editCustomer('${c.id}')" style="font-size:.8rem;padding:.3rem .6rem;background:#6b7280;margin-right:.3rem;">Edit</button>
+        <button onclick="recordPayment('${c.id}')" style="font-size:.8rem;padding:.3rem .6rem;background:#16a34a;margin-right:.3rem;">Pay</button>
+        <button onclick="viewCustomerHistory('${c.id}')" style="font-size:.8rem;padding:.3rem .6rem;background:#0891b2;margin-right:.3rem;">History</button>
+        <button onclick="deleteCustomer('${c.id}')" class="danger" style="font-size:.8rem;padding:.3rem .6rem;">Del</button>
+      </td>
+    </tr>`).join('')}</tbody></table>`;
 }
 
-function customerFormHTML(c={}){
-  return `
-    <div class="form-grid">
-      <div><label>Full Name / Business Name *</label><input id="cf-name" style="width:100%;" value="${c.name||''}"></div>
-      <div><label>Customer Type</label>
-        <select id="cf-type" style="width:100%;">
-          <option value="retail" ${c.customerType==='retail'?'selected':''}>Retail</option>
-          <option value="wholesale" ${c.customerType==='wholesale'?'selected':''}>Wholesale</option>
-        </select></div>
-      <div><label>Phone</label><input id="cf-phone" style="width:100%;" value="${c.phone||''}"></div>
-      <div><label>Email</label><input id="cf-email" style="width:100%;" value="${c.email||''}"></div>
-      <div><label>Address</label><input id="cf-address" style="width:100%;" value="${c.address||''}"></div>
-      <div><label>Credit Limit (₦)</label><input id="cf-credit" type="number" style="width:100%;" value="${c.creditLimit||0}"></div>
-      <div><label>Loyalty Points</label><input id="cf-loyalty" type="number" style="width:100%;" value="${c.loyaltyPoints||0}"></div>
-      <div style="grid-column:1/-1;"><label>Notes</label><textarea id="cf-notes" style="width:100%;height:60px;">${c.notes||''}</textarea></div>
-    </div>`;
+function customerFormHTML(c={}) {
+  return `<div class="form-grid">
+    <div><label>Name *</label><input id="cf-name" style="width:100%;" value="${c.name||''}"></div>
+    <div><label>Type</label>
+      <select id="cf-type" style="width:100%;">
+        <option value="retail" ${c.customerType==='retail'?'selected':''}>Retail</option>
+        <option value="wholesale" ${c.customerType==='wholesale'?'selected':''}>Wholesale</option>
+      </select></div>
+    <div><label>Phone</label><input id="cf-phone" style="width:100%;" value="${c.phone||''}"></div>
+    <div><label>Email</label><input id="cf-email" style="width:100%;" value="${c.email||''}"></div>
+    <div><label>Address</label><input id="cf-address" style="width:100%;" value="${c.address||''}"></div>
+    <div><label>Credit Limit (₦)</label><input id="cf-credit" type="number" style="width:100%;" value="${c.creditLimit||0}"></div>
+    <div><label>Loyalty Points</label><input id="cf-loyalty" type="number" style="width:100%;" value="${c.loyaltyPoints||0}"></div>
+    <div style="grid-column:1/-1;"><label>Notes</label><textarea id="cf-notes" style="width:100%;height:60px;">${c.notes||''}</textarea></div>
+  </div>`;
 }
 
-function openAddCustomer(){
-  modal('Add Customer',customerFormHTML(),(overlay,close)=>{
+function openAddCustomer() {
+  modal('Add Customer', customerFormHTML(), async (overlay,close) => {
     const name=$('#cf-name',overlay).value.trim();
     if(!name)return toast('Name required.','warn');
-    STATE.customers.push({
-      id:'C'+uid(),name,
-      customerType:$('#cf-type',overlay).value,
-      phone:$('#cf-phone',overlay).value.trim(),
-      email:$('#cf-email',overlay).value.trim(),
-      address:$('#cf-address',overlay).value.trim(),
+    await API.createCustomer({
+      name, customerType:$('#cf-type',overlay).value,
+      phone:$('#cf-phone',overlay).value.trim()||null,
+      email:$('#cf-email',overlay).value.trim()||null,
+      address:$('#cf-address',overlay).value.trim()||null,
       creditLimit:parseFloat($('#cf-credit',overlay).value)||0,
       loyaltyPoints:parseInt($('#cf-loyalty',overlay).value)||0,
-      notes:$('#cf-notes',overlay).value.trim(),
-      balance:0,totalPurchases:0,
+      notes:$('#cf-notes',overlay).value.trim()||null,
     });
-    saveState();close();renderCustomersTable();toast('Customer added.','success');
+    close(); await refreshSection('customers'); toast('Customer added.','success');
   });
 }
 
-function editCustomer(id){
-  const c=STATE.customers.find(x=>x.id===id);if(!c)return;
-  modal(`Edit – ${c.name}`,customerFormHTML(c),(overlay,close)=>{
-    c.name=$('#cf-name',overlay).value.trim()||c.name;
-    c.customerType=$('#cf-type',overlay).value;
-    c.phone=$('#cf-phone',overlay).value.trim();
-    c.email=$('#cf-email',overlay).value.trim();
-    c.address=$('#cf-address',overlay).value.trim();
-    c.creditLimit=parseFloat($('#cf-credit',overlay).value)||c.creditLimit;
-    c.loyaltyPoints=parseInt($('#cf-loyalty',overlay).value)||0;
-    c.notes=$('#cf-notes',overlay).value.trim();
-    saveState();close();renderCustomersTable();toast('Customer updated.','success');
+function editCustomer(id) {
+  const c=STATE.customers.find(x=>x.id===id); if(!c)return;
+  modal(`Edit – ${c.name}`, customerFormHTML(c), async (overlay,close) => {
+    await API.updateCustomer(id,{
+      name:$('#cf-name',overlay).value.trim()||c.name,
+      customerType:$('#cf-type',overlay).value,
+      phone:$('#cf-phone',overlay).value.trim()||null,
+      email:$('#cf-email',overlay).value.trim()||null,
+      address:$('#cf-address',overlay).value.trim()||null,
+      creditLimit:parseFloat($('#cf-credit',overlay).value)||c.creditLimit,
+      loyaltyPoints:parseInt($('#cf-loyalty',overlay).value)||0,
+      notes:$('#cf-notes',overlay).value.trim()||null,
+    });
+    close(); await refreshSection('customers'); toast('Updated.','success');
   });
 }
 
-function recordPayment(id){
-  const c=STATE.customers.find(x=>x.id===id);if(!c)return;
+function recordPayment(id) {
+  const c=STATE.customers.find(x=>x.id===id); if(!c)return;
   modal(`Record Payment – ${c.name}`,`
-    <p style="margin-bottom:1rem;">Outstanding Balance: <strong style="color:#dc2626;">${fmt(c.balance||0)}</strong></p>
+    <p style="margin-bottom:1rem;">Outstanding: <strong style="color:#dc2626;">${fmt(c.balance||0)}</strong></p>
     <div class="form-grid">
-      <div><label>Amount Paid (₦)</label><input id="pay-amt" type="number" style="width:100%;" value="${c.balance||0}"></div>
-      <div><label>Payment Method</label>
-        <select id="pay-method" style="width:100%;">
-          <option value="cash">Cash</option><option value="transfer">Bank Transfer</option>
-          <option value="pos-machine">POS Machine</option><option value="cheque">Cheque</option>
-        </select></div>
+      <div><label>Amount (₦)</label><input id="pay-amt" type="number" style="width:100%;" value="${c.balance||0}"></div>
+      <div><label>Method</label>
+        <select id="pay-method" style="width:100%;"><option value="cash">Cash</option><option value="transfer">Transfer</option><option value="pos-machine">POS</option><option value="cheque">Cheque</option></select></div>
       <div><label>Date</label><input id="pay-date" type="date" style="width:100%;" value="${today()}"></div>
-      <div><label>Reference / Note</label><input id="pay-note" style="width:100%;" placeholder="Cheque no., txn ref…"></div>
-    </div>`,(overlay,close)=>{
+      <div><label>Reference</label><input id="pay-ref" style="width:100%;"></div>
+    </div>`, async (overlay,close) => {
     const amt=parseFloat($('#pay-amt',overlay).value)||0;
-    if(amt<=0)return toast('Enter a valid amount.','warn');
-    if(amt>c.balance)return toast(`Amount exceeds balance of ${fmt(c.balance)}.`,'warn');
-    c.balance-=amt;
-    STATE.sales.push({
-      id:uid(),receiptNo:nextReceiptNo(),
-      customerId:id,customerName:c.name,
-      items:[],subtotal:amt,discountPct:0,discountAmt:0,
-      taxAmt:0,total:amt,
-      paymentMethod:$('#pay-method',overlay).value,
-      paymentStatus:'paid',type:'payment',
-      date:$('#pay-date',overlay).value+'T00:00:00.000Z',
-      notes:$('#pay-note',overlay).value,
+    if(amt<=0) return toast('Enter a valid amount.','warn');
+    if(amt>c.balance) return toast(`Exceeds balance of ${fmt(c.balance)}.`,'warn');
+    const rNo=nextReceiptNo();
+    await API.createSale({
+      receiptNo:rNo, customerId:id, warehouseId:null, repId:null,
+      items:[], subtotal:amt, discount:0, tax:0, total:amt,
+      paymentMethod:$('#pay-method',overlay).value, paymentStatus:'paid',
+      pointsEarned:0, pointsRedeemed:0,
+      note:$('#pay-ref',overlay).value.trim()||null,
     });
-    let remaining=amt;
-    STATE.sales.filter(s=>s.customerId===id&&s.paymentStatus==='unpaid').forEach(s=>{
-      if(remaining<=0)return;
-      if(remaining>=s.total){s.paymentStatus='paid';remaining-=s.total;}
-      else{s.total-=remaining;remaining=0;}
-    });
-    saveState();close();renderCustomersTable();toast(`Payment of ${fmt(amt)} recorded.`,'success');
+    close(); await refreshSection('customers'); toast(`Payment of ${fmt(amt)} recorded.`,'success');
   });
 }
 
-function viewCustomerHistory(id){
-  const c=STATE.customers.find(x=>x.id===id);if(!c)return;
+function viewCustomerHistory(id) {
+  const c=STATE.customers.find(x=>x.id===id); if(!c)return;
   const txns=STATE.sales.filter(s=>s.customerId===id).slice(-30).reverse();
-  const loyaltyTxns=STATE.loyaltyTransactions.filter(t=>t.customerId===id).slice(-10).reverse();
   modal(`History – ${c.name}`,`
-    <p style="margin-bottom:1rem;">
-      Total: <strong>${fmt(c.totalPurchases||0)}</strong> &nbsp;|&nbsp;
-      Outstanding: <strong style="color:#dc2626;">${fmt(c.balance||0)}</strong> &nbsp;|&nbsp;
-      Points: <strong style="color:#7c3aed;">🌟 ${fmtNum(c.loyaltyPoints||0)}</strong>
-    </p>
-    ${txns.length?`
-      <table>
-        <thead><tr><th>Date</th><th>Ref No.</th><th>Amount</th><th>Discount</th><th>Method</th><th>Status</th></tr></thead>
-        <tbody>${txns.map(s=>`
-          <tr>
-            <td>${fmtDate(s.date)}</td>
-            <td style="font-family:monospace;">${s.invoiceNo||s.receiptNo||'—'}</td>
-            <td>${fmt(s.total)}</td>
-            <td>${(s.totalDiscountAmt||0)>0?fmt(s.totalDiscountAmt):'—'}</td>
-            <td>${s.paymentMethod||'—'}</td>
-            <td><span class="badge badge-${s.paymentStatus==='paid'?'green':'yellow'}">${s.paymentStatus||'paid'}</span></td>
-          </tr>`).join('')}
-        </tbody>
-      </table>`:
-    '<p style="color:#9ca3af;">No transactions yet.</p>'}
-    ${loyaltyTxns.length?`
-      <h4 style="margin-top:1.25rem;">Loyalty Points Log</h4>
-      <table>
-        <thead><tr><th>Date</th><th>Sale Ref</th><th>Earned</th><th>Redeemed</th><th>Balance</th></tr></thead>
-        <tbody>${loyaltyTxns.map(t=>`
-          <tr>
-            <td>${fmtDate(t.date)}</td><td>${t.saleRef}</td>
-            <td style="color:#16a34a;">+${t.earned}</td>
-            <td style="color:#dc2626;">${t.redeemed?'-'+t.redeemed:'—'}</td>
-            <td style="color:#7c3aed;font-weight:600;">${t.balance}</td>
-          </tr>`).join('')}
-        </tbody>
-      </table>`:''}`,
-  null,'Close');
+    <p>Total: <strong>${fmt(c.totalPurchases||0)}</strong> | Outstanding: <strong style="color:#dc2626;">${fmt(c.balance||0)}</strong> | Points: <strong style="color:#7c3aed;">🌟 ${fmtNum(c.loyaltyPoints||0)}</strong></p>
+    ${txns.length?`<table><thead><tr><th>Date</th><th>Ref</th><th>Total</th><th>Method</th><th>Status</th></tr></thead>
+    <tbody>${txns.map(s=>`<tr>
+      <td>${fmtDate(s.date)}</td>
+      <td style="font-family:monospace;">${s.invoiceNo||s.receiptNo||'—'}</td>
+      <td>${fmt(s.total)}</td><td>${s.paymentMethod||'—'}</td>
+      <td><span class="badge badge-${s.paymentStatus==='paid'?'green':'yellow'}">${s.paymentStatus||'paid'}</span></td>
+    </tr>`).join('')}</tbody></table>`:'<p style="color:#9ca3af;">No transactions.</p>'}`,null,'Close');
 }
 
-function deleteCustomer(id){
+async function deleteCustomer(id) {
   if(!confirm2('Delete customer?'))return;
-  STATE.customers=STATE.customers.filter(c=>c.id!==id);
-  saveState();renderCustomersTable();toast('Deleted.','warn');
+  await API.deleteCustomer(id);
+  await refreshSection('customers'); toast('Deleted.','warn');
 }
 
-function exportCustomersXLSX(){
-  const rows=STATE.customers.map(c=>({
-    Name:c.name,Type:c.customerType||'retail',Phone:c.phone,Email:c.email||'',
-    Address:c.address||'',
-    'Credit Limit':c.creditLimit,'Balance Owed':c.balance||0,
-    'Loyalty Points':c.loyaltyPoints||0,'Total Purchases':c.totalPurchases||0,
-  }));
-  const ws=XLSX.utils.json_to_sheet(rows);
+function exportCustomersXLSX() {
   const wb=XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb,ws,'Customers');
+  XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(STATE.customers.map(c=>({
+    Name:c.name,Type:c.customerType||'retail',Phone:c.phone,Email:c.email||'',
+    Address:c.address||'','Credit Limit':c.creditLimit,'Balance':c.balance||0,
+    'Loyalty Points':c.loyaltyPoints||0,'Total Purchases':c.totalPurchases||0,
+  }))),'Customers');
   XLSX.writeFile(wb,'cnjohnson_customers.xlsx');
 }
 
 /* ════════════════════════════════════════════════════════════════
-   10. SUPPLIERS
+   11. SUPPLIERS
    ════════════════════════════════════════════════════════════════ */
-function renderSuppliers(){
-  const sec=$('#suppliers');
-  sec.innerHTML=`
-    <div class="card">
-      <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:.75rem;margin-bottom:1.5rem;">
-        <h2 style="margin:0;">Suppliers</h2>
-        <button onclick="openAddSupplier()">+ Add Supplier</button>
-      </div>
-      <div id="suppliers-table-wrap"></div>
-    </div>`;
+function renderSuppliers() {
+  $('#suppliers').innerHTML=`<div class="card">
+    <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:.75rem;margin-bottom:1.5rem;">
+      <h2 style="margin:0;">Suppliers</h2>
+      <button onclick="openAddSupplier()">+ Add Supplier</button>
+    </div>
+    <div id="suppliers-table-wrap"></div>
+  </div>`;
   renderSuppliersTable();
 }
 
-function renderSuppliersTable(){
-  const wrap=$('#suppliers-table-wrap');if(!wrap)return;
+function renderSuppliersTable() {
+  const wrap=$('#suppliers-table-wrap'); if(!wrap)return;
   if(!STATE.suppliers.length){wrap.innerHTML='<p style="color:#9ca3af;text-align:center;padding:2rem;">No suppliers.</p>';return;}
-  wrap.innerHTML=`
-    <table>
-      <thead><tr><th>ID</th><th>Name</th><th>Contact</th><th>Phone</th><th>Category</th><th>Rating</th><th>Balance Owed</th><th>Actions</th></tr></thead>
-      <tbody>${STATE.suppliers.map(s=>`
-        <tr>
-          <td style="font-family:monospace;">${s.id}</td>
-          <td><strong>${s.name}</strong></td>
-          <td>${s.contact||'—'}</td>
-          <td>${s.phone||'—'}</td>
-          <td>${s.category||'—'}</td>
-          <td>${'★'.repeat(s.rating||0)}${'☆'.repeat(5-(s.rating||0))}</td>
-          <td style="color:${(s.balance||0)>0?'#dc2626':'#16a34a'};font-weight:700;">${fmt(s.balance||0)}</td>
-          <td style="white-space:nowrap;">
-            <button onclick="editSupplier('${s.id}')" style="font-size:.8rem;padding:.3rem .6rem;background:#6b7280;margin-right:.3rem;">Edit</button>
-            <button onclick="paySupplier('${s.id}')" style="font-size:.8rem;padding:.3rem .6rem;background:#16a34a;margin-right:.3rem;">Pay</button>
-            <button onclick="deleteSupplier('${s.id}')" class="danger" style="font-size:.8rem;padding:.3rem .6rem;">Del</button>
-          </td>
-        </tr>`).join('')}
-      </tbody>
-    </table>`;
+  wrap.innerHTML=`<table>
+    <thead><tr><th>Name</th><th>Contact Person</th><th>Phone</th><th>Notes</th><th>Balance Owed</th><th>Actions</th></tr></thead>
+    <tbody>${STATE.suppliers.map(s=>`<tr>
+      <td><strong>${s.name}</strong></td>
+      <td>${s.contactPerson||'—'}</td>
+      <td>${s.phone||'—'}</td>
+      <td>${s.notes||'—'}</td>
+      <td style="color:${(s.balance||0)>0?'#dc2626':'#16a34a'};font-weight:700;">${fmt(s.balance||0)}</td>
+      <td style="white-space:nowrap;">
+        <button onclick="editSupplier('${s.id}')" style="font-size:.8rem;padding:.3rem .6rem;background:#6b7280;margin-right:.3rem;">Edit</button>
+        <button onclick="paySupplier('${s.id}')" style="font-size:.8rem;padding:.3rem .6rem;background:#16a34a;margin-right:.3rem;">Pay</button>
+        <button onclick="deleteSupplier('${s.id}')" class="danger" style="font-size:.8rem;padding:.3rem .6rem;">Del</button>
+      </td>
+    </tr>`).join('')}</tbody></table>`;
 }
 
-function supplierFormHTML(s={}){
-  return `
-    <div class="form-grid">
-      <div><label>Company Name *</label><input id="sf-name" style="width:100%;" value="${s.name||''}"></div>
-      <div><label>Contact Person</label><input id="sf-contact" style="width:100%;" value="${s.contact||''}"></div>
-      <div><label>Phone</label><input id="sf-phone" style="width:100%;" value="${s.phone||''}"></div>
-      <div><label>Email</label><input id="sf-email" style="width:100%;" value="${s.email||''}"></div>
-      <div><label>Address</label><input id="sf-address" style="width:100%;" value="${s.address||''}"></div>
-      <div><label>Product Category</label><input id="sf-cat" style="width:100%;" value="${s.category||''}"></div>
-      <div><label>Rating (1-5)</label>
-        <select id="sf-rating" style="width:100%;">
-          ${[1,2,3,4,5].map(n=>`<option value="${n}" ${(s.rating||0)===n?'selected':''}>${'★'.repeat(n)} ${n}/5</option>`).join('')}
-        </select></div>
-    </div>`;
+function supplierFormHTML(s={}) {
+  return `<div class="form-grid">
+    <div><label>Company Name *</label><input id="sf-name" style="width:100%;" value="${s.name||''}"></div>
+    <div><label>Contact Person</label><input id="sf-contact" style="width:100%;" value="${s.contactPerson||''}"></div>
+    <div><label>Phone</label><input id="sf-phone" style="width:100%;" value="${s.phone||''}"></div>
+    <div><label>Email</label><input id="sf-email" style="width:100%;" value="${s.email||''}"></div>
+    <div><label>Address</label><input id="sf-address" style="width:100%;" value="${s.address||''}"></div>
+    <div style="grid-column:1/-1;"><label>Notes</label><textarea id="sf-notes" style="width:100%;height:60px;">${s.notes||''}</textarea></div>
+  </div>`;
 }
 
-function openAddSupplier(){
-  modal('Add Supplier',supplierFormHTML(),(overlay,close)=>{
+function openAddSupplier() {
+  modal('Add Supplier', supplierFormHTML(), async (overlay,close) => {
     const name=$('#sf-name',overlay).value.trim();
     if(!name)return toast('Name required.','warn');
-    STATE.suppliers.push({
-      id:'S'+uid(),name,
-      contact:$('#sf-contact',overlay).value.trim(),
-      phone:$('#sf-phone',overlay).value.trim(),
-      email:$('#sf-email',overlay).value.trim(),
-      address:$('#sf-address',overlay).value.trim(),
-      category:$('#sf-cat',overlay).value.trim(),
-      rating:parseInt($('#sf-rating',overlay).value)||3,
-      balance:0,
+    await API.createSupplier({
+      name,
+      contactPerson:$('#sf-contact',overlay).value.trim()||null,
+      phone:$('#sf-phone',overlay).value.trim()||null,
+      email:$('#sf-email',overlay).value.trim()||null,
+      address:$('#sf-address',overlay).value.trim()||null,
+      notes:$('#sf-notes',overlay).value.trim()||null,
     });
-    saveState();close();renderSuppliersTable();toast('Supplier added.','success');
+    close(); await refreshSection('suppliers'); toast('Supplier added.','success');
   });
 }
 
-function editSupplier(id){
-  const s=STATE.suppliers.find(x=>x.id===id);if(!s)return;
-  modal(`Edit – ${s.name}`,supplierFormHTML(s),(overlay,close)=>{
-    s.name=$('#sf-name',overlay).value.trim()||s.name;
-    s.contact=$('#sf-contact',overlay).value.trim();
-    s.phone=$('#sf-phone',overlay).value.trim();
-    s.email=$('#sf-email',overlay).value.trim();
-    s.address=$('#sf-address',overlay).value.trim();
-    s.category=$('#sf-cat',overlay).value.trim();
-    s.rating=parseInt($('#sf-rating',overlay).value)||s.rating;
-    saveState();close();renderSuppliersTable();toast('Updated.','success');
+function editSupplier(id) {
+  const s=STATE.suppliers.find(x=>x.id===id); if(!s)return;
+  modal(`Edit – ${s.name}`, supplierFormHTML(s), async (overlay,close) => {
+    await API.updateSupplier(id,{
+      name:$('#sf-name',overlay).value.trim()||s.name,
+      contactPerson:$('#sf-contact',overlay).value.trim()||null,
+      phone:$('#sf-phone',overlay).value.trim()||null,
+      email:$('#sf-email',overlay).value.trim()||null,
+      address:$('#sf-address',overlay).value.trim()||null,
+      notes:$('#sf-notes',overlay).value.trim()||null,
+    });
+    close(); await refreshSection('suppliers'); toast('Updated.','success');
   });
 }
 
-function paySupplier(id){
-  const s=STATE.suppliers.find(x=>x.id===id);if(!s)return;
+function paySupplier(id) {
+  const s=STATE.suppliers.find(x=>x.id===id); if(!s)return;
   modal(`Pay Supplier – ${s.name}`,`
     <p>Balance owed: <strong style="color:#dc2626;">${fmt(s.balance||0)}</strong></p>
     <div class="form-grid">
       <div><label>Amount (₦)</label><input id="sp-amt" type="number" style="width:100%;" value="${s.balance||0}"></div>
-      <div><label>Method</label>
-        <select id="sp-method" style="width:100%;">
-          <option>Cash</option><option>Transfer</option><option>Cheque</option>
-        </select></div>
-      <div><label>Reference</label><input id="sp-ref" style="width:100%;" placeholder="Txn ref…"></div>
-    </div>`,(overlay,close)=>{
+      <div><label>Method</label><select id="sp-method" style="width:100%;"><option>Cash</option><option>Transfer</option><option>Cheque</option></select></div>
+      <div><label>Reference</label><input id="sp-ref" style="width:100%;"></div>
+    </div>`, async (overlay,close) => {
     const amt=parseFloat($('#sp-amt',overlay).value)||0;
-    if(amt>s.balance)return toast('Amount exceeds balance.','warn');
-    s.balance=Math.max(0,s.balance-amt);
-    saveState();close();renderSuppliersTable();toast(`Payment of ${fmt(amt)} to ${s.name} recorded.`,'success');
+    if(amt>(s.balance||0))return toast('Exceeds balance.','warn');
+    await API.updateSupplier(id,{ balance:Math.max(0,(s.balance||0)-amt) });
+    close(); await refreshSection('suppliers'); toast(`Payment of ${fmt(amt)} recorded.`,'success');
   });
 }
 
-function deleteSupplier(id){
+async function deleteSupplier(id) {
   if(!confirm2('Delete supplier?'))return;
-  STATE.suppliers=STATE.suppliers.filter(s=>s.id!==id);
-  saveState();renderSuppliersTable();toast('Deleted.','warn');
+  await API.deleteSupplier(id);
+  await refreshSection('suppliers'); toast('Deleted.','warn');
 }
 
 /* ════════════════════════════════════════════════════════════════
-   11. SALES REPS
+   12. SALES REPS
    ════════════════════════════════════════════════════════════════ */
-function renderSalesReps(){
-  const sec=$('#sales-reps');
-  sec.innerHTML=`
-    <div class="card">
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1.5rem;">
-        <h2 style="margin:0;">Sales Representatives</h2>
-        <button onclick="openAddRep()">+ Add Rep</button>
-      </div>
-      <div id="reps-table-wrap"></div>
-    </div>`;
+function renderSalesReps() {
+  $('#sales-reps').innerHTML=`<div class="card">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1.5rem;">
+      <h2 style="margin:0;">Sales Representatives</h2>
+      <button onclick="openAddRep()">+ Add Rep</button>
+    </div>
+    <div id="reps-table-wrap"></div>
+  </div>`;
   renderRepsTable();
 }
 
-function renderRepsTable(){
-  const wrap=$('#reps-table-wrap');if(!wrap)return;
+function renderRepsTable() {
+  const wrap=$('#reps-table-wrap'); if(!wrap)return;
   if(!STATE.salesReps.length){wrap.innerHTML='<p style="color:#9ca3af;text-align:center;padding:2rem;">No reps yet.</p>';return;}
-  wrap.innerHTML=`
-    <table>
-      <thead><tr><th>ID</th><th>Name</th><th>Phone</th><th>Warehouse</th><th>Commission %</th><th>Total Sales</th><th>Commission Earned</th><th>Actions</th></tr></thead>
-      <tbody>${STATE.salesReps.map(r=>`
-        <tr>
-          <td style="font-family:monospace;">${r.id}</td>
-          <td><strong>${r.name}</strong></td>
-          <td>${r.phone||'—'}</td>
-          <td>${getWarehouseName(r.warehouseId)}</td>
-          <td>${r.commission}%</td>
-          <td>${fmt(r.totalSales||0)}</td>
-          <td>${fmt((r.totalSales||0)*r.commission/100)}</td>
-          <td style="white-space:nowrap;">
-            <button onclick="editRep('${r.id}')" style="font-size:.8rem;padding:.3rem .6rem;background:#6b7280;margin-right:.3rem;">Edit</button>
-            <button onclick="deleteRep('${r.id}')" class="danger" style="font-size:.8rem;padding:.3rem .6rem;">Del</button>
-          </td>
-        </tr>`).join('')}
-      </tbody>
-    </table>`;
+  wrap.innerHTML=`<table>
+    <thead><tr><th>Name</th><th>Phone</th><th>Warehouse</th><th>Commission %</th><th>Total Sales</th><th>Commission Earned</th><th>Actions</th></tr></thead>
+    <tbody>${STATE.salesReps.map(r=>`<tr>
+      <td><strong>${r.name}</strong></td><td>${r.phone||'—'}</td>
+      <td>${getWarehouseName(r.warehouseId)}</td>
+      <td>${r.commission}%</td><td>${fmt(r.totalSales||0)}</td>
+      <td>${fmt((r.totalSales||0)*r.commission/100)}</td>
+      <td style="white-space:nowrap;">
+        <button onclick="editRep('${r.id}')" style="font-size:.8rem;padding:.3rem .6rem;background:#6b7280;margin-right:.3rem;">Edit</button>
+        <button onclick="deleteRep('${r.id}')" class="danger" style="font-size:.8rem;padding:.3rem .6rem;">Del</button>
+      </td>
+    </tr>`).join('')}</tbody></table>`;
 }
 
-function repFormHTML(r={}){
-  const whOpts=STATE.warehouses.map(w=>`<option value="${w.id}" ${r.warehouseId===w.id?'selected':''}>${w.name}</option>`).join('');
-  return `
-    <div class="form-grid">
-      <div><label>Full Name *</label><input id="rf-name" style="width:100%;" value="${r.name||''}"></div>
-      <div><label>Phone</label><input id="rf-phone" style="width:100%;" value="${r.phone||''}"></div>
-      <div><label>Email</label><input id="rf-email" style="width:100%;" value="${r.email||''}"></div>
-      <div><label>Assigned Warehouse</label><select id="rf-wh" style="width:100%;">${whOpts}</select></div>
-      <div><label>Commission Rate (%)</label><input id="rf-comm" type="number" min="0" max="50" style="width:100%;" value="${r.commission||2}"></div>
-    </div>`;
+function repFormHTML(r={}) {
+  const wo=STATE.warehouses.map(w=>`<option value="${w.id}" ${r.warehouseId===w.id?'selected':''}>${w.name}</option>`).join('');
+  return `<div class="form-grid">
+    <div><label>Full Name *</label><input id="rf-name" style="width:100%;" value="${r.name||''}"></div>
+    <div><label>Phone</label><input id="rf-phone" style="width:100%;" value="${r.phone||''}"></div>
+    <div><label>Email</label><input id="rf-email" style="width:100%;" value="${r.email||''}"></div>
+    <div><label>Warehouse</label><select id="rf-wh" style="width:100%;"><option value="">None</option>${wo}</select></div>
+    <div><label>Commission %</label><input id="rf-comm" type="number" min="0" max="50" style="width:100%;" value="${r.commission||2}"></div>
+  </div>`;
 }
 
-function openAddRep(){
-  modal('Add Sales Rep',repFormHTML(),(overlay,close)=>{
+function openAddRep() {
+  modal('Add Sales Rep', repFormHTML(), async (overlay,close) => {
     const name=$('#rf-name',overlay).value.trim();
     if(!name)return toast('Name required.','warn');
-    STATE.salesReps.push({
-      id:'R'+uid(),name,
-      phone:$('#rf-phone',overlay).value.trim(),
-      email:$('#rf-email',overlay).value.trim(),
-      warehouseId:$('#rf-wh',overlay).value,
+    await API.createSalesRep({
+      name,
+      phone:$('#rf-phone',overlay).value.trim()||null,
+      email:$('#rf-email',overlay).value.trim()||null,
+      warehouseId:$('#rf-wh',overlay).value||null,
       commission:parseFloat($('#rf-comm',overlay).value)||2,
-      totalSales:0,
     });
-    saveState();close();renderRepsTable();toast('Rep added.','success');
+    close(); await refreshSection('sales-reps'); toast('Rep added.','success');
   });
 }
-function editRep(id){
-  const r=STATE.salesReps.find(x=>x.id===id);if(!r)return;
-  modal(`Edit Rep – ${r.name}`,repFormHTML(r),(overlay,close)=>{
-    r.name=$('#rf-name',overlay).value.trim()||r.name;
-    r.phone=$('#rf-phone',overlay).value.trim();
-    r.email=$('#rf-email',overlay).value.trim();
-    r.warehouseId=$('#rf-wh',overlay).value;
-    r.commission=parseFloat($('#rf-comm',overlay).value)||r.commission;
-    saveState();close();renderRepsTable();toast('Updated.','success');
+
+function editRep(id) {
+  const r=STATE.salesReps.find(x=>x.id===id); if(!r)return;
+  modal(`Edit – ${r.name}`, repFormHTML(r), async (overlay,close) => {
+    await API.updateSalesRep(id,{
+      name:$('#rf-name',overlay).value.trim()||r.name,
+      phone:$('#rf-phone',overlay).value.trim()||null,
+      email:$('#rf-email',overlay).value.trim()||null,
+      warehouseId:$('#rf-wh',overlay).value||null,
+      commission:parseFloat($('#rf-comm',overlay).value)||r.commission,
+    });
+    close(); await refreshSection('sales-reps'); toast('Updated.','success');
   });
 }
-function deleteRep(id){
-  if(!confirm2('Delete this rep?'))return;
-  STATE.salesReps=STATE.salesReps.filter(r=>r.id!==id);
-  saveState();renderRepsTable();toast('Deleted.','warn');
+
+async function deleteRep(id) {
+  if(!confirm2('Delete rep?'))return;
+  await API.deleteSalesRep(id);
+  await refreshSection('sales-reps'); toast('Deleted.','warn');
 }
 
 /* ════════════════════════════════════════════════════════════════
-   12. PURCHASES (Stock In)
+   13. PURCHASES
    ════════════════════════════════════════════════════════════════ */
 let purchaseItems=[];
 
-function renderPurchases(){
-  const sec=$('#purchases');
+function renderPurchases() {
   const supOpts=STATE.suppliers.map(s=>`<option value="${s.id}">${s.name}</option>`).join('');
   const whOpts=STATE.warehouses.map(w=>`<option value="${w.id}">${w.name}</option>`).join('');
-  const prodOpts=STATE.products.map(p=>`<option value="${p.id}">${p.name} (${p.sku})</option>`).join('');
-  sec.innerHTML=`
+  const prOpts=STATE.products.map(p=>`<option value="${p.id}">${p.name} (${p.sku||''})</option>`).join('');
+  $('#purchases').innerHTML=`
     <div class="card">
-      <h2 style="margin-bottom:1.5rem;">Record Purchase / Stock Receiving</h2>
+      <h2 style="margin-bottom:1.5rem;">Record Purchase</h2>
       <div class="form-grid">
-        <div><label>Supplier *</label><select id="pu-supplier" style="width:100%;"><option value="">-- Select --</option>${supOpts}</select></div>
-        <div><label>Receiving Warehouse</label><select id="pu-wh" style="width:100%;">${whOpts}</select></div>
-        <div><label>Invoice / LPO No.</label><input id="pu-invoiceno" style="width:100%;" placeholder="Supplier's invoice number"></div>
+        <div><label>Supplier *</label><select id="pu-supplier" style="width:100%;"><option value="">— Select —</option>${supOpts}</select></div>
+        <div><label>Warehouse</label><select id="pu-wh" style="width:100%;">${whOpts}</select></div>
+        <div><label>Purchase/Invoice No.</label><input id="pu-no" style="width:100%;" placeholder="Auto if blank"></div>
         <div><label>Date</label><input id="pu-date" type="date" style="width:100%;" value="${today()}"></div>
       </div>
-      <h3 style="margin:1.5rem 0 .75rem;">Add Items</h3>
+      <h3 style="margin:1.5rem 0 .75rem;">Items</h3>
       <div class="form-grid" style="align-items:end;">
-        <div><label>Product</label><select id="pu-prod" style="width:100%;"><option value="">-- Select --</option>${prodOpts}</select></div>
-        <div><label>Quantity</label><input id="pu-qty" type="number" min="1" style="width:100%;" placeholder="Qty"></div>
-        <div><label>Unit Cost (₦)</label><input id="pu-cost" type="number" min="0" style="width:100%;" placeholder="Cost per unit"></div>
-        <div style="padding-bottom:.1rem;"><button onclick="addPurchaseItem()">+ Add Item</button></div>
+        <div><label>Product</label><select id="pu-prod" style="width:100%;"><option value="">— Select —</option>${prOpts}</select></div>
+        <div><label>Qty</label><input id="pu-qty" type="number" min="1" style="width:100%;"></div>
+        <div><label>Unit Cost (₦)</label><input id="pu-cost" type="number" min="0" style="width:100%;"></div>
+        <div><button onclick="addPurchaseItem()">+ Add</button></div>
       </div>
       <div id="purchase-items-wrap" style="margin-top:1rem;"></div>
       <div id="purchase-total" style="text-align:right;font-size:1.2rem;font-weight:700;margin-top:1rem;"></div>
       <div class="form-grid" style="margin-top:1rem;">
-        <div><label>Payment Status</label>
+        <div><label>Payment</label>
           <select id="pu-pay-status" style="width:100%;">
-            <option value="paid">Paid (Cash / Transfer)</option>
-            <option value="credit">On Credit (Owed to Supplier)</option>
+            <option value="paid">Paid in Full</option>
+            <option value="credit">On Credit</option>
             <option value="partial">Partial Payment</option>
           </select></div>
-        <div><label>Amount Paid (₦)</label><input id="pu-paid-amt" type="number" min="0" style="width:100%;" placeholder="For partial payments"></div>
-        <div style="grid-column:1/-1;"><label>Notes</label><input id="pu-notes" style="width:100%;" placeholder="Optional remarks…"></div>
+        <div><label>Amount Paid (₦)</label><input id="pu-paid-amt" type="number" min="0" style="width:100%;"></div>
+        <div style="grid-column:1/-1;"><label>Notes</label><input id="pu-notes" style="width:100%;"></div>
       </div>
-      <button onclick="savePurchase()" style="margin-top:1.5rem;font-size:1rem;padding:.9rem 2rem;">✔ Save Purchase & Update Stock</button>
+      <button onclick="savePurchase()" style="margin-top:1.5rem;font-size:1rem;padding:.9rem 2rem;">✔ Save Purchase</button>
     </div>
     <div class="card" style="margin-top:1.5rem;">
       <h3 style="margin-bottom:1rem;">Purchase History</h3>
@@ -1932,389 +1764,314 @@ function renderPurchases(){
 }
 
 function addPurchaseItem(){
-  const pid=$('#pu-prod').value,qty=parseInt($('#pu-qty').value)||0,cost=parseFloat($('#pu-cost').value)||0;
+  const pid=$('#pu-prod').value, qty=parseInt($('#pu-qty').value)||0, cost=parseFloat($('#pu-cost').value)||0;
   if(!pid||qty<=0||cost<=0)return toast('Select product, qty and cost.','warn');
-  const product=STATE.products.find(p=>p.id===pid);if(!product)return;
-  const existing=purchaseItems.find(i=>i.productId===pid);
-  if(existing){existing.qty+=qty;existing.cost=cost;}
-  else{purchaseItems.push({productId:pid,name:product.name,unit:product.unit,qty,cost});}
+  const p=STATE.products.find(x=>x.id===pid); if(!p)return;
+  const ex=purchaseItems.find(i=>i.productId===pid);
+  if(ex){ex.qty+=qty;ex.cost=cost;}
+  else purchaseItems.push({productId:pid,name:p.name,unit:p.unit||'',qty,cost});
   renderPurchaseItemsWrap();
-  $('#pu-qty').value='';$('#pu-cost').value='';
+  $('#pu-qty').value=''; $('#pu-cost').value='';
 }
 
 function renderPurchaseItemsWrap(){
-  const wrap=$('#purchase-items-wrap');if(!wrap)return;
+  const wrap=$('#purchase-items-wrap'); if(!wrap)return;
   if(!purchaseItems.length){wrap.innerHTML='';$('#purchase-total').textContent='';return;}
-  wrap.innerHTML=`
-    <table>
-      <thead><tr><th>Product</th><th>Qty</th><th>Unit Cost</th><th>Total</th><th></th></tr></thead>
-      <tbody>${purchaseItems.map((i,idx)=>`
-        <tr>
-          <td>${i.name}</td><td>${i.qty} ${i.unit}</td>
-          <td>${fmt(i.cost)}</td><td>${fmt(i.qty*i.cost)}</td>
-          <td><button onclick="removePurchaseItem(${idx})" class="danger" style="font-size:.8rem;padding:.2rem .5rem;">✕</button></td>
-        </tr>`).join('')}
-      </tbody>
-    </table>`;
-  const grandTotal=purchaseItems.reduce((s,i)=>s+i.qty*i.cost,0);
-  $('#purchase-total').textContent=`Grand Total: ${fmt(grandTotal)}`;
+  wrap.innerHTML=`<table>
+    <thead><tr><th>Product</th><th>Qty</th><th>Unit Cost</th><th>Total</th><th></th></tr></thead>
+    <tbody>${purchaseItems.map((i,idx)=>`<tr>
+      <td>${i.name}</td><td>${i.qty} ${i.unit}</td>
+      <td>${fmt(i.cost)}</td><td>${fmt(i.qty*i.cost)}</td>
+      <td><button onclick="removePurchaseItem(${idx})" class="danger" style="font-size:.8rem;padding:.2rem .5rem;">✕</button></td>
+    </tr>`).join('')}</tbody></table>`;
+  const gt=purchaseItems.reduce((s,i)=>s+i.qty*i.cost,0);
+  $('#purchase-total').textContent=`Grand Total: ${fmt(gt)}`;
 }
 function removePurchaseItem(idx){purchaseItems.splice(idx,1);renderPurchaseItemsWrap();}
 
-function savePurchase(){
+async function savePurchase(){
   if(!purchaseItems.length)return toast('Add at least one item.','warn');
   const supplierId=$('#pu-supplier').value;
   if(!supplierId)return toast('Select a supplier.','warn');
   const whId=$('#pu-wh').value;
-  const supplier=STATE.suppliers.find(s=>s.id===supplierId);
   const grandTotal=purchaseItems.reduce((s,i)=>s+i.qty*i.cost,0);
   const payStatus=$('#pu-pay-status').value;
   const paidAmt=parseFloat($('#pu-paid-amt').value)||0;
-  const owed=payStatus==='credit'?grandTotal:payStatus==='partial'?grandTotal-paidAmt:0;
-  purchaseItems.forEach(item=>{
-    const product=STATE.products.find(p=>p.id===item.productId);
-    if(product){product.stock[whId]=(product.stock[whId]||0)+item.qty;product.costPrice=item.cost;}
-  });
-  if(supplier)supplier.balance=(supplier.balance||0)+owed;
-  STATE.purchases.push({
-    id:uid(),invoiceNo:$('#pu-invoiceno').value.trim(),
-    supplierId,supplierName:supplier?.name||'Unknown',
-    warehouseId:whId,warehouseName:getWarehouseName(whId),
-    items:[...purchaseItems],grandTotal,paymentStatus:payStatus,paidAmt,owed,
-    notes:$('#pu-notes').value.trim(),
-    date:$('#pu-date').value+'T00:00:00.000Z',
-  });
-  saveState();
-  toast(`Purchase of ${fmt(grandTotal)} saved. Stock updated.`,'success');
-  purchaseItems=[];
-  renderPurchases();
+  const paidAmount=payStatus==='paid'?grandTotal:payStatus==='partial'?paidAmt:0;
+  const purchaseNo=$('#pu-no').value.trim() || `PUR-${Date.now()}`;
+
+  showLoading('Saving purchase…');
+  try {
+    await API.createPurchase({
+      supplierId,
+      warehouseId:   whId || null,
+      invoiceNo:     purchaseNo,
+      grandTotal,
+      paidAmount,
+      paymentStatus: payStatus,
+      note:          $('#pu-notes').value.trim() || null,
+      items: purchaseItems.map(i => ({
+        productId: i.productId,
+        qty:       i.qty,
+        costPrice: i.cost,
+        total:     i.qty * i.cost,
+      })),
+    });
+    toast(`Purchase ${purchaseNo} saved.`,'success');
+    purchaseItems=[];
+    await refreshSection('purchases');
+  } catch(e){ toast(e.message,'error'); }
+  finally{ hideLoading(); }
 }
 
 function renderPurchaseHistory(){
-  const wrap=$('#purchase-history-wrap');if(!wrap)return;
+  const wrap=$('#purchase-history-wrap'); if(!wrap)return;
   if(!STATE.purchases.length){wrap.innerHTML='<p style="color:#9ca3af;text-align:center;padding:2rem;">No purchases yet.</p>';return;}
-  wrap.innerHTML=`
-    <table>
-      <thead><tr><th>Date</th><th>Invoice No.</th><th>Supplier</th><th>Warehouse</th><th>Total</th><th>Owed</th><th>Status</th></tr></thead>
-      <tbody>${STATE.purchases.slice(-30).reverse().map(p=>`
-        <tr>
-          <td>${fmtDate(p.date)}</td><td style="font-family:monospace;">${p.invoiceNo||'—'}</td>
-          <td>${p.supplierName}</td><td>${p.warehouseName}</td>
-          <td>${fmt(p.grandTotal)}</td><td style="color:#dc2626;">${(p.owed||0)>0?fmt(p.owed):'—'}</td>
-          <td><span class="badge badge-${p.paymentStatus==='paid'?'green':p.paymentStatus==='partial'?'blue':'yellow'}">${p.paymentStatus}</span></td>
-        </tr>`).join('')}
-      </tbody>
-    </table>`;
+  wrap.innerHTML=`<table>
+    <thead><tr><th>Date</th><th>Purchase No.</th><th>Supplier</th><th>Warehouse</th><th>Total</th><th>Paid</th><th>Owed</th></tr></thead>
+    <tbody>${STATE.purchases.slice(-30).reverse().map(p=>`<tr>
+      <td>${fmtDate(p.date)}</td>
+      <td style="font-family:monospace;">${p.invoiceNo||'—'}</td>
+      <td>${p.supplierName}</td><td>${p.warehouseName||'—'}</td>
+      <td>${fmt(p.grandTotal)}</td><td>${fmt(p.paidAmt)}</td>
+      <td style="color:${p.owed>0?'#dc2626':'#16a34a'};">${p.owed>0?fmt(p.owed):'Paid'}</td>
+    </tr>`).join('')}</tbody></table>`;
 }
 
 /* ════════════════════════════════════════════════════════════════
-   13. INVOICES
+   14. INVOICES
    ════════════════════════════════════════════════════════════════ */
 function renderInvoices(){
-  const sec=$('#invoices');
-  sec.innerHTML=`
-    <div class="card">
-      <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:.75rem;margin-bottom:1.5rem;">
-        <h2 style="margin:0;">Invoices (Credit Sales)</h2>
-        <div style="display:flex;gap:.75rem;">
-          <select id="inv-filter" style="width:160px;" onchange="renderInvoicesTable()">
-            <option value="">All Statuses</option>
-            <option value="unpaid">Unpaid</option>
-            <option value="paid">Paid</option>
-          </select>
-          <button onclick="exportInvoicesXLSX()" style="background:#16a34a;">⬇ Export</button>
-        </div>
+  $('#invoices').innerHTML=`<div class="card">
+    <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:.75rem;margin-bottom:1.5rem;">
+      <h2 style="margin:0;">Invoices (Credit Sales)</h2>
+      <div style="display:flex;gap:.75rem;">
+        <select id="inv-filter" style="width:160px;" onchange="renderInvoicesTable()">
+          <option value="">All</option><option value="unpaid">Unpaid</option><option value="paid">Paid</option>
+        </select>
+        <button onclick="exportInvoicesXLSX()" style="background:#16a34a;">⬇ Export</button>
       </div>
-      <div id="invoices-table-wrap"></div>
-    </div>`;
+    </div>
+    <div id="invoices-table-wrap"></div>
+  </div>`;
   renderInvoicesTable();
 }
 
 function renderInvoicesTable(){
   const filter=$('#inv-filter')?.value||'';
-  const wrap=$('#invoices-table-wrap');if(!wrap)return;
-  const creditSales=STATE.sales.filter(s=>s.invoiceNo&&(!filter||s.paymentStatus===filter)).reverse();
-  if(!creditSales.length){wrap.innerHTML='<p style="color:#9ca3af;text-align:center;padding:2rem;">No invoices found.</p>';return;}
-  wrap.innerHTML=`
-    <table>
-      <thead><tr>
-        <th>Invoice No.</th><th>Date</th><th>Customer</th><th>Total</th>
-        <th>Discounts</th><th>Status</th><th>Actions</th>
-      </tr></thead>
-      <tbody>${creditSales.map(s=>`
-        <tr>
-          <td style="font-family:monospace;"><strong>${s.invoiceNo}</strong></td>
-          <td>${fmtDate(s.date)}</td>
-          <td>${s.customerName}</td>
-          <td>${fmt(s.total)}</td>
-          <td>${(s.totalDiscountAmt||0)>0?`<span style="color:#16a34a;">-${fmt(s.totalDiscountAmt)}</span>`:'—'}</td>
-          <td><span class="badge badge-${s.paymentStatus==='paid'?'green':'yellow'}">${s.paymentStatus}</span></td>
-          <td style="white-space:nowrap;">
-            <button onclick="printInvoice('${s.id}')" style="font-size:.8rem;padding:.3rem .6rem;background:#0891b2;margin-right:.3rem;">Print</button>
-            <button onclick="issueCreditNote('${s.id}')" style="font-size:.8rem;padding:.3rem .6rem;background:#8b5cf6;margin-right:.3rem;">Credit Note</button>
-            ${s.paymentStatus!=='paid'?`<button onclick="markInvoicePaid('${s.id}')" style="font-size:.8rem;padding:.3rem .6rem;background:#16a34a;">Mark Paid</button>`:''}
-          </td>
-        </tr>`).join('')}
-      </tbody>
-      <tfoot>
-        <tr>
-          <td colspan="3" style="font-weight:700;text-align:right;">Total Outstanding:</td>
-          <td style="font-weight:700;color:#dc2626;">${fmt(creditSales.filter(s=>s.paymentStatus!=='paid').reduce((a,s)=>a+s.total,0))}</td>
-          <td colspan="3"></td>
-        </tr>
-      </tfoot>
-    </table>`;
+  const wrap=$('#invoices-table-wrap'); if(!wrap)return;
+  const list=STATE.sales.filter(s=>s.invoiceNo&&(!filter||s.paymentStatus===filter)).reverse();
+  if(!list.length){wrap.innerHTML='<p style="color:#9ca3af;text-align:center;padding:2rem;">No invoices.</p>';return;}
+  wrap.innerHTML=`<table>
+    <thead><tr><th>Invoice No.</th><th>Date</th><th>Customer</th><th>Total</th><th>Status</th><th>Actions</th></tr></thead>
+    <tbody>${list.map(s=>`<tr>
+      <td style="font-family:monospace;"><strong>${s.invoiceNo}</strong></td>
+      <td>${fmtDate(s.date)}</td><td>${s.customerName}</td><td>${fmt(s.total)}</td>
+      <td><span class="badge badge-${s.paymentStatus==='paid'?'green':'yellow'}">${s.paymentStatus}</span></td>
+      <td style="white-space:nowrap;">
+        <button onclick="printInvoice('${s.id}')" style="font-size:.8rem;padding:.3rem .6rem;background:#0891b2;margin-right:.3rem;">Print</button>
+        <button onclick="issueCreditNote('${s.id}')" style="font-size:.8rem;padding:.3rem .6rem;background:#8b5cf6;margin-right:.3rem;">Credit Note</button>
+        ${s.paymentStatus!=='paid'?`<button onclick="markInvoicePaid('${s.id}')" style="font-size:.8rem;padding:.3rem .6rem;background:#16a34a;">Mark Paid</button>`:''}
+      </td>
+    </tr>`).join('')}</tbody>
+    <tfoot><tr>
+      <td colspan="3" style="font-weight:700;text-align:right;">Total Outstanding:</td>
+      <td style="font-weight:700;color:#dc2626;">${fmt(list.filter(s=>s.paymentStatus!=='paid').reduce((a,s)=>a+s.total,0))}</td>
+      <td colspan="2"></td>
+    </tr></tfoot>
+  </table>`;
 }
 
-function printInvoice(saleId){
-  const sale=STATE.sales.find(s=>s.id===saleId);if(!sale)return;
-  printReceipt(sale);
-}
+function printInvoice(id){ const s=STATE.sales.find(x=>x.id===id); if(s) printReceipt(s); }
 
-function markInvoicePaid(saleId){
-  const sale=STATE.sales.find(s=>s.id===saleId);if(!sale)return;
-  if(!confirm2(`Mark invoice ${sale.invoiceNo} as paid?`))return;
-  sale.paymentStatus='paid';
-  const customer=STATE.customers.find(c=>c.id===sale.customerId);
-  if(customer)customer.balance=Math.max(0,(customer.balance||0)-sale.total);
-  saveState();renderInvoicesTable();toast('Invoice marked as paid.','success');
+async function markInvoicePaid(id){
+  const s=STATE.sales.find(x=>x.id===id); if(!s)return;
+  if(!confirm2(`Mark invoice ${s.invoiceNo} as paid?`))return;
+  await API.updateSale(id,{paymentStatus:'paid'});
+  await refreshSection('invoices'); toast('Marked as paid.','success');
 }
 
 function issueCreditNote(saleId){
-  const sale=STATE.sales.find(s=>s.id===saleId);if(!sale)return;
-  modal(`Issue Credit Note for ${sale.invoiceNo}`,`
-    <p style="margin-bottom:1rem;">Original Invoice: <strong>${sale.invoiceNo}</strong> | Amount: <strong>${fmt(sale.total)}</strong></p>
+  const s=STATE.sales.find(x=>x.id===saleId); if(!s)return;
+  modal(`Issue Credit Note for ${s.invoiceNo}`,`
+    <p style="margin-bottom:1rem;">Invoice: <strong>${s.invoiceNo}</strong> | Amount: <strong>${fmt(s.total)}</strong></p>
     <div class="form-grid">
-      <div><label>Credit Amount (₦)</label><input id="cn-amt" type="number" style="width:100%;" max="${sale.total}" value="${sale.total}"></div>
+      <div><label>Credit Amount (₦)</label><input id="cn-amt" type="number" style="width:100%;" value="${s.total}"></div>
       <div><label>Reason</label>
         <select id="cn-reason" style="width:100%;">
-          <option value="return">Goods Returned</option>
-          <option value="overcharge">Overcharge Correction</option>
-          <option value="damage">Damaged Goods</option>
-          <option value="other">Other</option>
+          <option value="Goods Returned">Goods Returned</option>
+          <option value="Overcharge Correction">Overcharge Correction</option>
+          <option value="Damaged Goods">Damaged Goods</option>
+          <option value="Other">Other</option>
         </select></div>
       <div style="grid-column:1/-1;"><label>Notes</label><textarea id="cn-notes" style="width:100%;height:60px;"></textarea></div>
-    </div>`,(overlay,close)=>{
+    </div>`, async (overlay,close) => {
     const amt=parseFloat($('#cn-amt',overlay).value)||0;
-    if(amt<=0||amt>sale.total)return toast('Invalid amount.','warn');
+    if(amt<=0||amt>s.total)return toast('Invalid amount.','warn');
     const cnNo=nextCreditNoteNo();
-    const customer=STATE.customers.find(c=>c.id===sale.customerId);
-    STATE.creditNotes.push({
-      id:uid(), creditNoteNo:cnNo, originalInvoiceNo:sale.invoiceNo,
-      customerId:sale.customerId, customerName:sale.customerName,
-      amount:amt, reason:$('#cn-reason',overlay).value,
-      notes:$('#cn-notes',overlay).value.trim(),
-      date:nowISO(), status:'issued',
+    await API.createCreditNote({
+      creditNo:     cnNo,
+      creditNoteNo: cnNo,
+      customerId:   s.customerId || null,
+      saleId:       saleId,
+      amount:       amt,
+      reason:       $('#cn-reason', overlay).value,
     });
-    if(customer) customer.balance=Math.max(0,(customer.balance||0)-amt);
-    saveState();close();renderInvoicesTable();
-    toast(`Credit Note ${cnNo} issued for ${fmt(amt)}.`,'success');
+    close(); await refreshSection('invoices'); toast(`Credit Note ${cnNo} issued.`,'success');
   });
 }
 
 function exportInvoicesXLSX(){
-  const rows=STATE.sales.filter(s=>s.invoiceNo).map(s=>({
-    'Invoice No.':s.invoiceNo,Date:fmtDate(s.date),Customer:s.customerName,
-    Total:s.total,'Total Discount':s.totalDiscountAmt||0,Status:s.paymentStatus,
-  }));
-  const ws=XLSX.utils.json_to_sheet(rows);
   const wb=XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb,ws,'Invoices');
+  XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(STATE.sales.filter(s=>s.invoiceNo).map(s=>({
+    'Invoice No.':s.invoiceNo,Date:fmtDate(s.date),Customer:s.customerName,Total:s.total,Status:s.paymentStatus,
+  }))),'Invoices');
   XLSX.writeFile(wb,'cnjohnson_invoices.xlsx');
 }
 
 /* ════════════════════════════════════════════════════════════════
-   14. QUOTES
+   15. QUOTES
    ════════════════════════════════════════════════════════════════ */
 function renderQuotes(){
-  const sec=$('#quotes');if(!sec)return;
-  sec.innerHTML=`
-    <div class="card">
-      <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:.75rem;margin-bottom:1.5rem;">
-        <h2 style="margin:0;">Price Quotations</h2>
-        <select id="qt-filter" style="width:140px;" onchange="renderQuotesTable()">
-          <option value="">All Statuses</option>
-          <option value="pending">Pending</option>
-          <option value="accepted">Accepted</option>
-          <option value="expired">Expired</option>
-          <option value="rejected">Rejected</option>
-        </select>
-      </div>
-      <div id="quotes-table-wrap"></div>
-    </div>`;
+  const sec=$('#quotes'); if(!sec)return;
+  sec.innerHTML=`<div class="card">
+    <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:.75rem;margin-bottom:1.5rem;">
+      <h2 style="margin:0;">Price Quotations</h2>
+      <select id="qt-filter" style="width:140px;" onchange="renderQuotesTable()">
+        <option value="">All</option><option value="pending">Pending</option>
+        <option value="accepted">Accepted</option><option value="rejected">Rejected</option>
+      </select>
+    </div>
+    <div id="quotes-table-wrap"></div>
+  </div>`;
   renderQuotesTable();
 }
 
 function renderQuotesTable(){
   const filter=$('#qt-filter')?.value||'';
-  const wrap=$('#quotes-table-wrap');if(!wrap)return;
-  const quotes=STATE.quotes.filter(q=>!filter||q.status===filter).reverse();
-  if(!quotes.length){wrap.innerHTML='<p style="color:#9ca3af;text-align:center;padding:2rem;">No quotes. Create one from POS.</p>';return;}
-  wrap.innerHTML=`
-    <table>
-      <thead><tr><th>Quote No.</th><th>Date</th><th>Customer</th><th>Total</th><th>Valid Until</th><th>Status</th><th>Actions</th></tr></thead>
-      <tbody>${quotes.map(q=>{
-        const validUntil=new Date(new Date(q.date).getTime()+(q.validDays||7)*86400000);
-        const expired=validUntil<new Date()&&q.status==='pending';
-        return `
-          <tr>
-            <td style="font-family:monospace;"><strong>${q.quoteNo}</strong></td>
-            <td>${fmtDate(q.date)}</td>
-            <td>${q.customerName}</td>
-            <td>${fmt(q.total)}</td>
-            <td>${fmtDate(validUntil.toISOString())}${expired?' ⚠':''}</td>
-            <td><span class="badge badge-${q.status==='accepted'?'green':q.status==='rejected'||expired?'red':'yellow'}">${expired?'expired':q.status}</span></td>
-            <td style="white-space:nowrap;">
-              <button onclick="printQuote('${q.id}')" style="font-size:.8rem;padding:.3rem .6rem;background:#0891b2;margin-right:.3rem;">Print</button>
-              ${q.status==='pending'?`
-                <button onclick="convertQuoteToSale('${q.id}')" style="font-size:.8rem;padding:.3rem .6rem;background:#16a34a;margin-right:.3rem;">Convert</button>
-                <button onclick="updateQuoteStatus('${q.id}','rejected')" class="danger" style="font-size:.8rem;padding:.3rem .6rem;">Reject</button>`:''
-              }
-            </td>
-          </tr>`;
-      }).join('')}
-      </tbody>
-    </table>`;
+  const wrap=$('#quotes-table-wrap'); if(!wrap)return;
+  const list=STATE.quotes.filter(q=>!filter||q.status===filter).reverse();
+  if(!list.length){wrap.innerHTML='<p style="color:#9ca3af;text-align:center;padding:2rem;">No quotes. Create from POS.</p>';return;}
+  wrap.innerHTML=`<table>
+    <thead><tr><th>Quote No.</th><th>Date</th><th>Customer</th><th>Total</th><th>Status</th><th>Actions</th></tr></thead>
+    <tbody>${list.map(q=>`<tr>
+      <td style="font-family:monospace;"><strong>${q.quoteNo}</strong></td>
+      <td>${fmtDate(q.date)}</td><td>${q.customerName}</td><td>${fmt(q.total)}</td>
+      <td><span class="badge badge-${q.status==='accepted'?'green':q.status==='rejected'?'red':'yellow'}">${q.status}</span></td>
+      <td style="white-space:nowrap;">
+        <button onclick="printQuote('${q.id}')" style="font-size:.8rem;padding:.3rem .6rem;background:#0891b2;margin-right:.3rem;">Print</button>
+        ${q.status==='pending'?`
+          <button onclick="convertQuoteToSale('${q.id}')" style="font-size:.8rem;padding:.3rem .6rem;background:#16a34a;margin-right:.3rem;">Convert</button>
+          <button onclick="updateQuoteStatus('${q.id}','REJECTED')" class="danger" style="font-size:.8rem;padding:.3rem .6rem;">Reject</button>`:''}
+      </td>
+    </tr>`).join('')}</tbody></table>`;
+}
+
+function convertQuoteToSale(quoteId){
+  const q=STATE.quotes.find(x=>x.id===quoteId); if(!q)return;
+  if(!confirm2(`Convert Quote ${q.quoteNo} to sale?`))return;
+  posCart=q.items.map(i=>({...i, unitPrice:i.unitPrice||i.price, manualDiscountPct:i.discount||0}));
+  posWarehouse=q.warehouseId||'';
+  API.updateQuote(quoteId,{status:'ACCEPTED'}).catch(()=>{});
+  showSection('pos');
+  setTimeout(()=>{
+    const sel=$('#pos-customer');
+    if(sel&&q.customerId){sel.value=q.customerId;onPOSCustomerChange();}
+    renderCartItems(); updatePOSTotals();
+  },300);
+  toast(`Quote ${q.quoteNo} loaded into POS.`,'success');
+}
+
+async function updateQuoteStatus(quoteId,status){
+  await API.updateQuote(quoteId,{status});
+  await refreshSection('quotes'); toast(`Quote marked as ${status.toLowerCase()}.`,'info');
 }
 
 function printQuote(quoteId){
-  const q=STATE.quotes.find(x=>x.id===quoteId);if(!q)return;
+  const q=STATE.quotes.find(x=>x.id===quoteId); if(!q)return;
   const s=STATE.settings;
-  const validUntil=new Date(new Date(q.date).getTime()+(q.validDays||7)*86400000);
-  const win=window.open('','_blank','width=420,height=700');if(!win)return;
-  const itemsHTML=q.items.map(i=>`
-    <tr>
-      <td>${i.name}</td>
-      <td style="text-align:center;">${i.qty} ${i.unit}</td>
-      <td style="text-align:right;">${fmt(i.unitPrice)}</td>
-      ${i.effectiveDiscountPct>0?`<td style="text-align:center;">${i.effectiveDiscountPct}%</td>`:'<td>—</td>'}
-      <td style="text-align:right;">${fmt(i.qty*i.unitPrice*(1-i.effectiveDiscountPct/100))}</td>
-    </tr>`).join('');
+  const win=window.open('','_blank','width=560,height=700'); if(!win)return;
   win.document.write(`<!DOCTYPE html><html><head><title>Quote ${q.quoteNo}</title>
     <style>body{font-family:Georgia,serif;max-width:600px;margin:2rem auto;padding:1rem;}
     h1{color:#1e40af;}table{width:100%;border-collapse:collapse;}
-    th,td{border:1px solid #e5e7eb;padding:.5rem;font-size:.875rem;}
-    th{background:#f8fafc;}.footer{margin-top:2rem;color:#64748b;font-size:.8rem;}
-    @media print{button{display:none;}}</style>
-    </head><body>
+    th,td{border:1px solid #e5e7eb;padding:.5rem;font-size:.875rem;}th{background:#f8fafc;}
+    @media print{button{display:none;}}</style></head><body>
     <h1>PRICE QUOTATION</h1>
     <div style="display:flex;justify-content:space-between;margin-bottom:1.5rem;">
       <div><h3>${s.companyName}</h3><p>${s.address}</p><p>${s.phone}</p></div>
-      <div style="text-align:right;"><p><strong>Quote No.:</strong> ${q.quoteNo}</p>
-      <p><strong>Date:</strong> ${fmtDate(q.date)}</p>
-      <p><strong>Valid Until:</strong> ${fmtDate(validUntil.toISOString())}</p></div>
+      <div style="text-align:right;"><p><strong>Quote:</strong> ${q.quoteNo}</p><p><strong>Date:</strong> ${fmtDate(q.date)}</p></div>
     </div>
     <p><strong>To:</strong> ${q.customerName}</p>
-    <table>
-      <thead><tr><th>Item</th><th>Qty</th><th>Unit Price</th><th>Discount</th><th>Total</th></tr></thead>
-      <tbody>${itemsHTML}</tbody>
-    </table>
-    <table style="margin-top:1rem;width:300px;margin-left:auto;">
+    <table><thead><tr><th>Item</th><th>Qty</th><th>Unit Price</th><th>Discount</th><th>Total</th></tr></thead>
+    <tbody>${q.items.map(i=>`<tr>
+      <td>${i.name||i.productId}</td><td>${i.qty}</td>
+      <td>${fmt(i.unitPrice||i.price||0)}</td>
+      <td>${i.discount||0}%</td>
+      <td>${fmt(i.total||0)}</td>
+    </tr>`).join('')}</tbody></table>
+    <table style="margin-top:1rem;width:280px;margin-left:auto;">
       <tr><td>Subtotal:</td><td style="text-align:right;">${fmt(q.subtotal)}</td></tr>
-      ${(q.extraDiscPct||0)>0?`<tr><td>Extra Discount (${q.extraDiscPct}%):</td><td style="text-align:right;">${fmt(q.subtotal*q.extraDiscPct/100)}</td></tr>`:''}
-      <tr><td>Tax (${s.taxRate}%):</td><td style="text-align:right;">${fmt(q.taxAmt)}</td></tr>
-      <tr style="font-weight:bold;font-size:1.1rem;"><td>TOTAL:</td><td style="text-align:right;">${fmt(q.total)}</td></tr>
+      <tr><td>Tax:</td><td style="text-align:right;">${fmt(q.taxAmt)}</td></tr>
+      <tr style="font-weight:bold;"><td>TOTAL:</td><td style="text-align:right;">${fmt(q.total)}</td></tr>
     </table>
-    <div class="footer">
-      <p>This quotation is valid for ${q.validDays||7} days from issue date.</p>
-      <p>Prices are subject to change after the validity period.</p>
-    </div>
-    <button onclick="window.print()" style="margin-top:1rem;padding:.5rem 1.5rem;cursor:pointer;">Print Quote</button>
+    <button onclick="window.print()" style="margin-top:1rem;padding:.5rem 1.5rem;cursor:pointer;">Print</button>
     </body></html>`);
   win.document.close();
 }
 
-function convertQuoteToSale(quoteId){
-  const q=STATE.quotes.find(x=>x.id===quoteId);if(!q)return;
-  if(!confirm2(`Convert Quote ${q.quoteNo} to a sale?`))return;
-  // Load cart from quote
-  posCart=q.items.map(i=>({...i}));
-  posWarehouse=q.warehouseId;
-  q.status='accepted';
-  saveState();
-  showSection('pos');
-  // Pre-select customer
-  setTimeout(()=>{
-    const sel=$('#pos-customer');
-    if(sel&&q.customerId){sel.value=q.customerId;onPOSCustomerChange();}
-    renderCartItems();updatePOSTotals();
-  },200);
-  toast(`Quote ${q.quoteNo} loaded into POS.`,'success');
-}
-
-function updateQuoteStatus(quoteId,status){
-  const q=STATE.quotes.find(x=>x.id===quoteId);if(!q)return;
-  q.status=status;saveState();renderQuotesTable();
-  toast(`Quote ${q.quoteNo} marked as ${status}.`,'info');
-}
-
 /* ════════════════════════════════════════════════════════════════
-   15. CREDIT NOTES
+   16. CREDIT NOTES
    ════════════════════════════════════════════════════════════════ */
 function renderCreditNotes(){
-  const sec=$('#credit-notes');if(!sec)return;
-  sec.innerHTML=`
-    <div class="card">
-      <h2 style="margin-bottom:1.5rem;">Credit Notes & Returns</h2>
-      <div id="cn-table-wrap"></div>
-    </div>`;
+  const sec=$('#credit-notes'); if(!sec)return;
+  sec.innerHTML=`<div class="card">
+    <h2 style="margin-bottom:1.5rem;">Credit Notes & Returns</h2>
+    <div id="cn-table-wrap"></div>
+  </div>`;
   const wrap=$('#cn-table-wrap');
-  if(!STATE.creditNotes.length){wrap.innerHTML='<p style="color:#9ca3af;text-align:center;padding:2rem;">No credit notes issued yet.</p>';return;}
-  wrap.innerHTML=`
-    <table>
-      <thead><tr><th>Credit Note No.</th><th>Date</th><th>Customer</th><th>Original Invoice</th><th>Amount</th><th>Reason</th><th>Notes</th></tr></thead>
-      <tbody>${STATE.creditNotes.slice().reverse().map(cn=>`
-        <tr>
-          <td style="font-family:monospace;"><strong>${cn.creditNoteNo}</strong></td>
-          <td>${fmtDate(cn.date)}</td>
-          <td>${cn.customerName}</td>
-          <td style="font-family:monospace;">${cn.originalInvoiceNo}</td>
-          <td style="color:#dc2626;font-weight:700;">-${fmt(cn.amount)}</td>
-          <td>${cn.reason}</td>
-          <td>${cn.notes||'—'}</td>
-        </tr>`).join('')}
-      </tbody>
-    </table>`;
+  if(!STATE.creditNotes.length){wrap.innerHTML='<p style="color:#9ca3af;text-align:center;padding:2rem;">No credit notes.</p>';return;}
+  wrap.innerHTML=`<table>
+    <thead><tr><th>Credit Note No.</th><th>Date</th><th>Customer</th><th>Original Invoice</th><th>Amount</th><th>Reason</th></tr></thead>
+    <tbody>${STATE.creditNotes.slice().reverse().map(cn=>`<tr>
+      <td style="font-family:monospace;"><strong>${cn.creditNoteNo}</strong></td>
+      <td>${fmtDate(cn.date)}</td><td>${cn.customerName||'—'}</td>
+      <td style="font-family:monospace;">${cn.originalInvoiceNo||'—'}</td>
+      <td style="color:#dc2626;font-weight:700;">-${fmt(cn.amount)}</td>
+      <td>${cn.reason||'—'}</td>
+    </tr>`).join('')}</tbody></table>`;
 }
 
 /* ════════════════════════════════════════════════════════════════
-   16. EXPENSES
+   17. EXPENSES
    ════════════════════════════════════════════════════════════════ */
 function renderExpenses(){
-  const sec=$('#expenses');if(!sec)return;
-  sec.innerHTML=`
-    <div class="card">
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1.5rem;">
-        <h2 style="margin:0;">Operational Expenses</h2>
-        <button onclick="openAddExpense()">+ Record Expense</button>
-      </div>
-      <div id="expenses-table-wrap"></div>
-    </div>`;
+  const sec=$('#expenses'); if(!sec)return;
+  sec.innerHTML=`<div class="card">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1.5rem;">
+      <h2 style="margin:0;">Operational Expenses</h2>
+      <button onclick="openAddExpense()">+ Record Expense</button>
+    </div>
+    <div id="expenses-table-wrap"></div>
+  </div>`;
   renderExpensesTable();
 }
 
 function renderExpensesTable(){
-  const wrap=$('#expenses-table-wrap');if(!wrap)return;
-  if(!STATE.expenses.length){wrap.innerHTML='<p style="color:#9ca3af;text-align:center;padding:2rem;">No expenses recorded.</p>';return;}
+  const wrap=$('#expenses-table-wrap'); if(!wrap)return;
+  if(!STATE.expenses.length){wrap.innerHTML='<p style="color:#9ca3af;text-align:center;padding:2rem;">No expenses.</p>';return;}
   const total=STATE.expenses.reduce((s,e)=>s+(e.amount||0),0);
-  wrap.innerHTML=`
-    <table>
-      <thead><tr><th>Date</th><th>Category</th><th>Description</th><th>Amount</th><th>Paid By</th><th>Actions</th></tr></thead>
-      <tbody>${STATE.expenses.slice(-50).reverse().map(e=>`
-        <tr>
-          <td>${fmtDate(e.date)}</td>
-          <td><span class="badge badge-blue">${e.category}</span></td>
-          <td>${e.description}</td>
-          <td style="font-weight:700;">${fmt(e.amount)}</td>
-          <td>${e.paidBy||'—'}</td>
-          <td>
-            <button onclick="deleteExpense('${e.id}')" class="danger" style="font-size:.8rem;padding:.2rem .5rem;">Del</button>
-          </td>
-        </tr>`).join('')}
-      </tbody>
-      <tfoot><tr><td colspan="3" style="text-align:right;font-weight:700;">Total:</td>
-        <td style="font-weight:700;">${fmt(total)}</td><td colspan="2"></td></tr></tfoot>
-    </table>`;
+  wrap.innerHTML=`<table>
+    <thead><tr><th>Date</th><th>Category</th><th>Description</th><th>Amount</th><th>Paid By</th><th>Actions</th></tr></thead>
+    <tbody>${STATE.expenses.slice(-50).reverse().map(e=>`<tr>
+      <td>${fmtDate(e.date)}</td>
+      <td><span class="badge badge-blue">${e.category||'—'}</span></td>
+      <td>${e.description||e.title||'—'}</td>
+      <td style="font-weight:700;">${fmt(e.amount)}</td>
+      <td>${e.paidBy||'—'}</td>
+      <td><button onclick="deleteExpense('${e.id}')" class="danger" style="font-size:.8rem;padding:.2rem .5rem;">Del</button></td>
+    </tr>`).join('')}</tbody>
+    <tfoot><tr><td colspan="3" style="text-align:right;font-weight:700;">Total:</td><td style="font-weight:700;">${fmt(total)}</td><td colspan="2"></td></tr></tfoot>
+  </table>`;
 }
 
 function openAddExpense(){
@@ -2325,240 +2082,137 @@ function openAddExpense(){
         <datalist id="ex-cats">
           ${['Transport','Fuel','Rent','Salary','Utilities','Maintenance','Marketing','Office Supplies','Food','Other'].map(c=>`<option>${c}</option>`).join('')}
         </datalist></div>
-      <div><label>Amount (₦)</label><input id="ex-amt" type="number" min="0" style="width:100%;"></div>
+      <div><label>Description / Title *</label><input id="ex-title" style="width:100%;" placeholder="What was this for?"></div>
+      <div><label>Amount (₦) *</label><input id="ex-amt" type="number" min="0" style="width:100%;"></div>
       <div><label>Date</label><input id="ex-date" type="date" style="width:100%;" value="${today()}"></div>
-      <div><label>Paid By</label><input id="ex-by" style="width:100%;" placeholder="Name or method"></div>
-      <div style="grid-column:1/-1;"><label>Description</label><textarea id="ex-desc" style="width:100%;height:60px;" placeholder="Details…"></textarea></div>
-    </div>`,(overlay,close)=>{
-    const cat=$('#ex-cat',overlay).value.trim();
+      <div><label>Paid By</label><input id="ex-by" style="width:100%;"></div>
+      <div style="grid-column:1/-1;"><label>Note</label><textarea id="ex-note" style="width:100%;height:50px;"></textarea></div>
+    </div>`, async (overlay,close) => {
+    const title=$('#ex-title',overlay).value.trim();
     const amt=parseFloat($('#ex-amt',overlay).value);
-    if(!cat||isNaN(amt)||amt<=0)return toast('Category and amount required.','warn');
-    STATE.expenses.push({
-      id:uid(),category:cat,amount:amt,
-      date:$('#ex-date',overlay).value+'T00:00:00.000Z',
-      paidBy:$('#ex-by',overlay).value.trim(),
-      description:$('#ex-desc',overlay).value.trim(),
+    if(!title||isNaN(amt)||amt<=0)return toast('Description and amount required.','warn');
+    await API.createExpense({
+      title,
+      description:title,
+      amount:amt,
+      category:$('#ex-cat',overlay).value.trim()||null,
+      paidBy:$('#ex-by',overlay).value.trim()||null,
+      note:$('#ex-note',overlay).value.trim()||null,
+      date:$('#ex-date',overlay).value||today(),
     });
-    saveState();close();renderExpensesTable();toast('Expense recorded.','success');
+    close(); await refreshSection('expenses'); toast('Expense recorded.','success');
   });
 }
-function deleteExpense(id){
+
+async function deleteExpense(id){
   if(!confirm2('Delete this expense?'))return;
-  STATE.expenses=STATE.expenses.filter(e=>e.id!==id);
-  saveState();renderExpensesTable();toast('Deleted.','warn');
+  await API.deleteExpense(id);
+  await refreshSection('expenses'); toast('Deleted.','warn');
 }
 
 /* ════════════════════════════════════════════════════════════════
-   17. REPORTS & ANALYTICS
+   18. REPORTS
    ════════════════════════════════════════════════════════════════ */
 function renderReports(){
-  const sec=$('#reports');
-  sec.innerHTML=`
-    <div class="card">
-      <h2 style="margin-bottom:1.5rem;">Reports & Analytics</h2>
-      <div style="display:flex;gap:1rem;flex-wrap:wrap;align-items:flex-end;margin-bottom:2rem;">
-        <div><label>From</label><input id="rep-from" type="date" style="width:160px;"
-          value="${new Date(new Date().getFullYear(),new Date().getMonth(),1).toISOString().split('T')[0]}"></div>
-        <div><label>To</label><input id="rep-to" type="date" style="width:160px;" value="${today()}"></div>
-        <button onclick="runReports()">Generate Reports</button>
-        <button onclick="exportReportsXLSX()" style="background:#16a34a;">⬇ Export to Excel</button>
-        <button onclick="exportProfitLoss()" style="background:#8b5cf6;">📊 P&L Statement</button>
-      </div>
-      <div id="rep-kpis" class="stats-grid"></div>
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:1.5rem;margin-top:1.5rem;">
-        <div class="card" style="box-shadow:none;border:1px solid #e5e7eb;">
-          <h4>Sales by Payment Method</h4>
-          <canvas id="chart-payment" height="220"></canvas>
-        </div>
-        <div class="card" style="box-shadow:none;border:1px solid #e5e7eb;">
-          <h4>Top Products by Revenue</h4>
-          <canvas id="chart-products" height="220"></canvas>
-        </div>
-      </div>
-      <div id="rep-tables" style="margin-top:2rem;"></div>
-    </div>`;
+  $('#reports').innerHTML=`<div class="card">
+    <h2 style="margin-bottom:1.5rem;">Reports & Analytics</h2>
+    <div style="display:flex;gap:1rem;flex-wrap:wrap;align-items:flex-end;margin-bottom:2rem;">
+      <div><label>From</label><input id="rep-from" type="date" style="width:160px;" value="${new Date(new Date().getFullYear(),new Date().getMonth(),1).toISOString().split('T')[0]}"></div>
+      <div><label>To</label><input id="rep-to" type="date" style="width:160px;" value="${today()}"></div>
+      <button onclick="runReports()">Generate</button>
+      <button onclick="exportReportsXLSX()" style="background:#16a34a;">⬇ Excel</button>
+      <button onclick="exportProfitLoss()" style="background:#8b5cf6;">📊 P&amp;L</button>
+    </div>
+    <div id="rep-kpis" class="stats-grid"></div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:1.5rem;margin-top:1.5rem;">
+      <div class="card" style="box-shadow:none;border:1px solid #e5e7eb;"><h4>Sales by Payment Method</h4><canvas id="chart-payment" height="220"></canvas></div>
+      <div class="card" style="box-shadow:none;border:1px solid #e5e7eb;"><h4>Top Products by Revenue</h4><canvas id="chart-products" height="220"></canvas></div>
+    </div>
+    <div id="rep-tables" style="margin-top:2rem;"></div>
+  </div>`;
   runReports();
 }
 
 function runReports(){
   const from=new Date($('#rep-from')?.value||'1970-01-01');
   const to=new Date(($('#rep-to')?.value||today())+'T23:59:59');
-  const periodSales=STATE.sales.filter(s=>{
-    const d=new Date(s.date);return d>=from&&d<=to&&s.type!=='payment';
-  });
-  const totalRevenue=periodSales.reduce((a,s)=>a+(s.total||0),0);
-  const totalCOGS=periodSales.reduce((a,s)=>a+s.items.reduce((b,i)=>b+i.qty*(i.costPrice||0),0),0);
-  const grossProfit=totalRevenue-totalCOGS;
-  const grossMargin=totalRevenue?(grossProfit/totalRevenue*100):0;
-  const totalDiscounts=periodSales.reduce((a,s)=>a+(s.totalDiscountAmt||0),0);
-  const bulkDiscSavings=periodSales.reduce((a,s)=>a+(s.totalBulkDisc||0),0);
-  const totalExpenses=STATE.expenses.filter(e=>{const d=new Date(e.date);return d>=from&&d<=to;})
-    .reduce((a,e)=>a+(e.amount||0),0);
-  const netProfit=grossProfit-totalExpenses;
+  const ps=STATE.sales.filter(s=>{const d=new Date(s.date);return d>=from&&d<=to&&s.type!=='payment';});
+  const rev=ps.reduce((a,s)=>a+s.total,0);
+  const cogs=ps.reduce((a,s)=>a+s.items.reduce((b,i)=>b+i.qty*(i.costPrice||0),0),0);
+  const gp=rev-cogs, gm=rev?(gp/rev*100):0;
+  const disc=ps.reduce((a,s)=>a+(s.totalDiscountAmt||0),0);
+  const exps=STATE.expenses.filter(e=>{const d=new Date(e.date);return d>=from&&d<=to;});
+  const totalExp=exps.reduce((a,e)=>a+e.amount,0);
+  const np=gp-totalExp;
 
   const kpis=$('#rep-kpis');
   if(kpis) kpis.innerHTML=`
-    <div class="stat-card" style="border-left:5px solid var(--primary);">
-      <h3>Total Revenue</h3><div class="value" style="font-size:1.8rem;">${fmt(totalRevenue)}</div>
-      <div style="font-size:.8rem;color:#64748b;">${periodSales.length} transactions</div>
-    </div>
-    <div class="stat-card" style="border-left:5px solid #10b981;">
-      <h3>Gross Profit</h3><div class="value" style="font-size:1.8rem;">${fmt(grossProfit)}</div>
-      <div style="font-size:.8rem;color:#64748b;">Margin: ${grossMargin.toFixed(1)}%</div>
-    </div>
-    <div class="stat-card" style="border-left:5px solid #f43f5e;">
-      <h3>Net Profit</h3><div class="value" style="font-size:1.8rem;">${fmt(netProfit)}</div>
-      <div style="font-size:.8rem;color:#64748b;">After ${fmt(totalExpenses)} expenses</div>
-    </div>
-    <div class="stat-card" style="border-left:5px solid #f59e0b;">
-      <h3>Total Discounts Given</h3><div class="value" style="font-size:1.8rem;">${fmt(totalDiscounts)}</div>
-      <div style="font-size:.8rem;color:#64748b;">Bulk: ${fmt(bulkDiscSavings)}</div>
-    </div>`;
+    <div class="stat-card" style="border-left:5px solid var(--primary);"><h3>Total Revenue</h3><div class="value" style="font-size:1.8rem;">${fmt(rev)}</div><div style="font-size:.8rem;color:#64748b;">${ps.length} transactions</div></div>
+    <div class="stat-card" style="border-left:5px solid #10b981;"><h3>Gross Profit</h3><div class="value" style="font-size:1.8rem;">${fmt(gp)}</div><div style="font-size:.8rem;color:#64748b;">Margin: ${gm.toFixed(1)}%</div></div>
+    <div class="stat-card" style="border-left:5px solid #f43f5e;"><h3>Net Profit</h3><div class="value" style="font-size:1.8rem;">${fmt(np)}</div><div style="font-size:.8rem;color:#64748b;">After ${fmt(totalExp)} expenses</div></div>
+    <div class="stat-card" style="border-left:5px solid #f59e0b;"><h3>Discounts Given</h3><div class="value" style="font-size:1.8rem;">${fmt(disc)}</div></div>`;
 
   const payMap={};
-  periodSales.forEach(s=>{const m=s.paymentMethod||'cash';payMap[m]=(payMap[m]||0)+(s.total||0);});
+  ps.forEach(s=>{const m=s.paymentMethod||'cash';payMap[m]=(payMap[m]||0)+s.total;});
   drawDonutChart('chart-payment',Object.keys(payMap),Object.values(payMap));
 
   const prodMap={};
-  periodSales.forEach(s=>s.items.forEach(i=>{prodMap[i.name]=(prodMap[i.name]||0)+i.qty*(i.unitPrice||0);}));
-  const sortedProds=Object.entries(prodMap).sort((a,b)=>b[1]-a[1]).slice(0,6);
-  drawBarChart('chart-products',sortedProds.map(x=>x[0]),sortedProds.map(x=>x[1]));
+  ps.forEach(s=>s.items.forEach(i=>{prodMap[i.name]=(prodMap[i.name]||0)+i.qty*(i.unitPrice||0);}));
+  const topProds=Object.entries(prodMap).sort((a,b)=>b[1]-a[1]).slice(0,6);
+  drawBarChart('chart-products',topProds.map(x=>x[0]),topProds.map(x=>x[1]));
 
-  const repPerf=STATE.salesReps.map(r=>{
-    const repSales=periodSales.filter(s=>s.repId===r.id);
-    const rev=repSales.reduce((a,s)=>a+(s.total||0),0);
-    return{...r,periodSales:repSales.length,periodRevenue:rev,commission:rev*r.commission/100};
-  });
-
-  const custPerf=STATE.customers.map(c=>{
-    const custSales=periodSales.filter(s=>s.customerId===c.id);
-    const rev=custSales.reduce((a,s)=>a+(s.total||0),0);
-    return{...c,periodRevenue:rev,txns:custSales.length};
-  }).filter(c=>c.periodRevenue>0).sort((a,b)=>b.periodRevenue-a.periodRevenue).slice(0,10);
-
-  // Bulk discount usage stats
-  const bulkStats={};
-  periodSales.forEach(s=>s.items.forEach(i=>{
-    if((i.bulkDiscountPct||0)>0){
-      const key=`${i.bulkDiscountPct}%`;
-      bulkStats[key]=(bulkStats[key]||0)+(i.lineDiscount||0);
-    }
-  }));
-
-  // Expense breakdown
   const expCats={};
-  STATE.expenses.filter(e=>{const d=new Date(e.date);return d>=from&&d<=to;})
-    .forEach(e=>{expCats[e.category]=(expCats[e.category]||0)+e.amount;});
+  exps.forEach(e=>{expCats[e.category||'Other']=(expCats[e.category||'Other']||0)+e.amount;});
 
   const tables=$('#rep-tables');
   if(tables) tables.innerHTML=`
-    ${Object.keys(bulkStats).length?`
-      <div class="card" style="box-shadow:none;border:1px solid #e5e7eb;margin-bottom:1.5rem;">
-        <h4 style="margin-bottom:1rem;">🏷 Bulk Discount Usage</h4>
-        <table>
-          <thead><tr><th>Discount Tier</th><th>Total Saved for Customers</th></tr></thead>
-          <tbody>${Object.entries(bulkStats).map(([k,v])=>`
-            <tr><td>${k}</td><td style="color:#16a34a;font-weight:600;">${fmt(v)}</td></tr>`).join('')}
-          </tbody>
-        </table>
-      </div>`:''
-    }
     ${Object.keys(expCats).length?`
       <div class="card" style="box-shadow:none;border:1px solid #e5e7eb;margin-bottom:1.5rem;">
-        <h4 style="margin-bottom:1rem;">💸 Expense Breakdown</h4>
-        <table>
-          <thead><tr><th>Category</th><th>Amount</th><th>% of Total</th></tr></thead>
-          <tbody>${Object.entries(expCats).sort((a,b)=>b[1]-a[1]).map(([k,v])=>`
-            <tr>
-              <td>${k}</td><td>${fmt(v)}</td>
-              <td>${totalExpenses>0?((v/totalExpenses)*100).toFixed(1):'0'}%</td>
-            </tr>`).join('')}
-          </tbody>
-          <tfoot><tr><td>Total</td><td>${fmt(totalExpenses)}</td><td>100%</td></tr></tfoot>
-        </table>
-      </div>`:''
-    }
-    ${repPerf.length?`
-      <div class="card" style="box-shadow:none;border:1px solid #e5e7eb;margin-bottom:1.5rem;">
-        <h4 style="margin-bottom:1rem;">Sales Rep Performance</h4>
-        <table>
-          <thead><tr><th>Rep</th><th>Transactions</th><th>Revenue</th><th>Commission</th></tr></thead>
-          <tbody>${repPerf.map(r=>`
-            <tr><td>${r.name}</td><td>${r.periodSales}</td><td>${fmt(r.periodRevenue)}</td><td>${fmt(r.commission)}</td></tr>`).join('')}
-          </tbody>
-        </table>
-      </div>`:''
-    }
-    ${custPerf.length?`
-      <div class="card" style="box-shadow:none;border:1px solid #e5e7eb;margin-bottom:1.5rem;">
-        <h4 style="margin-bottom:1rem;">Top Customers</h4>
-        <table>
-          <thead><tr><th>Customer</th><th>Type</th><th>Transactions</th><th>Revenue</th><th>Loyalty Pts</th></tr></thead>
-          <tbody>${custPerf.map(c=>`
-            <tr><td>${c.name}</td>
-            <td><span class="badge badge-${c.customerType==='wholesale'?'blue':'green'}">${c.customerType||'retail'}</span></td>
-            <td>${c.txns}</td><td>${fmt(c.periodRevenue)}</td>
-            <td style="color:#7c3aed;">🌟 ${fmtNum(c.loyaltyPoints||0)}</td></tr>`).join('')}
-          </tbody>
-        </table>
-      </div>`:''
+        <h4>💸 Expense Breakdown</h4>
+        <table><thead><tr><th>Category</th><th>Amount</th><th>%</th></tr></thead>
+        <tbody>${Object.entries(expCats).sort((a,b)=>b[1]-a[1]).map(([k,v])=>`<tr><td>${k}</td><td>${fmt(v)}</td><td>${totalExp>0?((v/totalExp)*100).toFixed(1):0}%</td></tr>`).join('')}</tbody>
+        <tfoot><tr><td>Total</td><td>${fmt(totalExp)}</td><td>100%</td></tr></tfoot>
+        </table></div>`:''
     }
     <div class="card" style="box-shadow:none;border:1px solid #e5e7eb;">
-      <h4 style="margin-bottom:1rem;">Sales Transactions</h4>
-      ${periodSales.length?`
-        <table>
-          <thead><tr><th>Date</th><th>Ref No.</th><th>Customer</th><th>Rep</th><th>Total</th><th>Discounts</th><th>Method</th></tr></thead>
-          <tbody>${periodSales.slice().reverse().map(s=>`
-            <tr>
-              <td>${fmtDate(s.date)}</td>
-              <td style="font-family:monospace;">${s.invoiceNo||s.receiptNo||'—'}</td>
-              <td>${s.customerName||'Walk-in'}</td>
-              <td>${s.repName||'—'}</td>
-              <td>${fmt(s.total)}</td>
-              <td>${(s.totalDiscountAmt||0)>0?`<span style="color:#16a34a;">-${fmt(s.totalDiscountAmt)}</span>`:'—'}</td>
-              <td>${s.paymentMethod||'—'}</td>
-            </tr>`).join('')}
-          </tbody>
-        </table>`:
-      '<p style="color:#9ca3af;text-align:center;padding:1rem;">No sales in this period.</p>'}
+      <h4>Sales Transactions</h4>
+      ${ps.length?`<table>
+        <thead><tr><th>Date</th><th>Ref</th><th>Customer</th><th>Total</th><th>Method</th><th>Status</th></tr></thead>
+        <tbody>${ps.slice().reverse().map(s=>`<tr>
+          <td>${fmtDate(s.date)}</td>
+          <td style="font-family:monospace;">${s.invoiceNo||s.receiptNo||'—'}</td>
+          <td>${s.customerName||'Walk-in'}</td><td>${fmt(s.total)}</td>
+          <td>${s.paymentMethod||'—'}</td>
+          <td><span class="badge badge-${s.paymentStatus==='paid'?'green':'yellow'}">${s.paymentStatus||'—'}</span></td>
+        </tr>`).join('')}</tbody></table>`
+        :'<p style="color:#9ca3af;text-align:center;padding:1rem;">No sales in this period.</p>'}
     </div>`;
 }
 
-let charts={};
-function drawDonutChart(canvasId,labels,data){
-  if(charts[canvasId]){charts[canvasId].destroy();delete charts[canvasId];}
-  const canvas=document.getElementById(canvasId);if(!canvas)return;
-  charts[canvasId]=new Chart(canvas,{type:'doughnut',data:{labels,datasets:[{data,
-    backgroundColor:['#2563eb','#16a34a','#f59e0b','#dc2626','#8b5cf6','#06b6d4']}]},
-    options:{plugins:{legend:{position:'bottom'}},responsive:true}});
+let _charts={};
+function drawDonutChart(id,labels,data){
+  if(_charts[id]){_charts[id].destroy();delete _charts[id];}
+  const c=document.getElementById(id); if(!c)return;
+  _charts[id]=new Chart(c,{type:'doughnut',data:{labels,datasets:[{data,backgroundColor:['#2563eb','#16a34a','#f59e0b','#dc2626','#8b5cf6','#06b6d4']}]},options:{plugins:{legend:{position:'bottom'}},responsive:true}});
 }
-function drawBarChart(canvasId,labels,data){
-  if(charts[canvasId]){charts[canvasId].destroy();delete charts[canvasId];}
-  const canvas=document.getElementById(canvasId);if(!canvas)return;
-  charts[canvasId]=new Chart(canvas,{type:'bar',data:{
-    labels:labels.map(l=>l.length>18?l.slice(0,18)+'…':l),
-    datasets:[{label:'Revenue (₦)',data,backgroundColor:'#2563eb'}]},
-    options:{plugins:{legend:{display:false}},
-      scales:{y:{beginAtZero:true,ticks:{callback:v=>'₦'+v.toLocaleString()}}},responsive:true}});
+function drawBarChart(id,labels,data){
+  if(_charts[id]){_charts[id].destroy();delete _charts[id];}
+  const c=document.getElementById(id); if(!c)return;
+  _charts[id]=new Chart(c,{type:'bar',data:{labels:labels.map(l=>l.length>18?l.slice(0,18)+'…':l),datasets:[{label:'Revenue (₦)',data,backgroundColor:'#2563eb'}]},options:{plugins:{legend:{display:false}},scales:{y:{beginAtZero:true,ticks:{callback:v=>'₦'+v.toLocaleString()}}},responsive:true}});
 }
 
 function exportReportsXLSX(){
   const from=new Date($('#rep-from')?.value||'1970-01-01');
   const to=new Date(($('#rep-to')?.value||today())+'T23:59:59');
-  const periodSales=STATE.sales.filter(s=>{const d=new Date(s.date);return d>=from&&d<=to&&s.type!=='payment';});
-  const salesRows=periodSales.map(s=>({
-    Date:fmtDate(s.date),'Ref No.':s.invoiceNo||s.receiptNo||'',
-    Customer:s.customerName||'Walk-in',Rep:s.repName||'',
-    'Gross Total':s.subtotal||s.total,
-    'Bulk Discount':s.totalBulkDisc||0,'Other Discount':s.totalManualDisc||0,
-    'Total Discounts':s.totalDiscountAmt||0,Tax:s.taxAmt,Total:s.total,
-    Method:s.paymentMethod,Status:s.paymentStatus,
-  }));
-  const expRows=STATE.expenses.filter(e=>{const d=new Date(e.date);return d>=from&&d<=to;})
-    .map(e=>({Date:fmtDate(e.date),Category:e.category,Description:e.description,Amount:e.amount,PaidBy:e.paidBy||''}));
+  const ps=STATE.sales.filter(s=>{const d=new Date(s.date);return d>=from&&d<=to&&s.type!=='payment';});
   const wb=XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(salesRows),'Sales');
-  XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(expRows),'Expenses');
+  XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(ps.map(s=>({
+    Date:fmtDate(s.date),Ref:s.invoiceNo||s.receiptNo||'',Customer:s.customerName||'Walk-in',
+    Discounts:s.totalDiscountAmt||0,Tax:s.taxAmt||0,Total:s.total,Method:s.paymentMethod,Status:s.paymentStatus,
+  }))),'Sales');
+  XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(STATE.expenses.filter(e=>{const d=new Date(e.date);return d>=from&&d<=to;}).map(e=>({
+    Date:fmtDate(e.date),Category:e.category||'',Description:e.description||e.title||'',Amount:e.amount,PaidBy:e.paidBy||'',
+  }))),'Expenses');
   XLSX.writeFile(wb,`cnjohnson_report_${today()}.xlsx`);
   toast('Report exported.','success');
 }
@@ -2566,140 +2220,176 @@ function exportReportsXLSX(){
 function exportProfitLoss(){
   const from=new Date($('#rep-from')?.value||'1970-01-01');
   const to=new Date(($('#rep-to')?.value||today())+'T23:59:59');
-  const periodSales=STATE.sales.filter(s=>{const d=new Date(s.date);return d>=from&&d<=to&&s.type!=='payment';});
-  const revenue=periodSales.reduce((a,s)=>a+(s.total||0),0);
-  const cogs=periodSales.reduce((a,s)=>a+s.items.reduce((b,i)=>b+i.qty*(i.costPrice||0),0),0);
-  const grossProfit=revenue-cogs;
-  const expenses=STATE.expenses.filter(e=>{const d=new Date(e.date);return d>=from&&d<=to;});
-  const totalExp=expenses.reduce((a,e)=>a+(e.amount||0),0);
-  const netProfit=grossProfit-totalExp;
+  const ps=STATE.sales.filter(s=>{const d=new Date(s.date);return d>=from&&d<=to&&s.type!=='payment';});
+  const rev=ps.reduce((a,s)=>a+s.total,0);
+  const cogs=ps.reduce((a,s)=>a+s.items.reduce((b,i)=>b+i.qty*(i.costPrice||0),0),0);
+  const exps=STATE.expenses.filter(e=>{const d=new Date(e.date);return d>=from&&d<=to;});
+  const totalExp=exps.reduce((a,e)=>a+e.amount,0);
   const rows=[
-    {Item:'REVENUE','Amount (₦)':revenue},
-    {Item:'Cost of Goods Sold','Amount (₦)':-cogs},
-    {Item:'GROSS PROFIT','Amount (₦)':grossProfit},
-    {Item:'---','Amount (₦)':''},
+    {Item:'REVENUE','Amount (₦)':rev},{Item:'Cost of Goods Sold','Amount (₦)':-cogs},
+    {Item:'GROSS PROFIT','Amount (₦)':rev-cogs},{Item:'---','Amount (₦)':''},
     {Item:'EXPENSES','Amount (₦)':''},
-    ...expenses.map(e=>({Item:`  ${e.category}: ${e.description}`,'Amount (₦)':-e.amount})),
-    {Item:'Total Expenses','Amount (₦)':-totalExp},
-    {Item:'---','Amount (₦)':''},
-    {Item:'NET PROFIT / (LOSS)','Amount (₦)':netProfit},
+    ...exps.map(e=>({Item:`  ${e.category||''}: ${e.description||e.title||''}`,'Amount (₦)':-e.amount})),
+    {Item:'Total Expenses','Amount (₦)':-totalExp},{Item:'---','Amount (₦)':''},
+    {Item:'NET PROFIT / (LOSS)','Amount (₦)':rev-cogs-totalExp},
   ];
-  const ws=XLSX.utils.json_to_sheet(rows);
   const wb=XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb,ws,'Profit & Loss');
+  XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(rows),'Profit & Loss');
   XLSX.writeFile(wb,`cnjohnson_PL_${today()}.xlsx`);
-  toast('P&L Statement exported.','success');
+  toast('P&L exported.','success');
 }
 
 /* ════════════════════════════════════════════════════════════════
-   18. SETTINGS
+   19. SETTINGS
    ════════════════════════════════════════════════════════════════ */
 function renderSettings(){
-  const sec=$('#settings');
   const s=STATE.settings;
-  sec.innerHTML=`
-    <div class="card">
-      <h2 style="margin-bottom:1.5rem;">System Settings</h2>
-      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:2rem;">
-        <div>
-          <h3 style="margin-bottom:1rem;border-bottom:1px solid #e5e7eb;padding-bottom:.75rem;">Company Information</h3>
-          <div class="form-grid" style="grid-template-columns:1fr;">
-            <div><label>Company Name</label><input id="set-cname" style="width:100%;" value="${s.companyName}"></div>
-            <div><label>Address</label><input id="set-addr" style="width:100%;" value="${s.address}"></div>
-            <div><label>Phone</label><input id="set-phone" style="width:100%;" value="${s.phone}"></div>
-            <div><label>Email</label><input id="set-email" style="width:100%;" value="${s.email}"></div>
-          </div>
-        </div>
-        <div>
-          <h3 style="margin-bottom:1rem;border-bottom:1px solid #e5e7eb;padding-bottom:.75rem;">Financial Settings</h3>
-          <div class="form-grid" style="grid-template-columns:1fr;">
-            <div><label>Currency Symbol</label><input id="set-currency" style="width:100%;" value="${s.currency}" maxlength="3"></div>
-            <div><label>VAT / Tax Rate (%)</label><input id="set-tax" type="number" min="0" max="100" style="width:100%;" value="${s.taxRate}"></div>
-            <div><label>Low Stock Alert Threshold</label><input id="set-lowstock" type="number" min="1" style="width:100%;" value="${s.lowStockThreshold}"></div>
-          </div>
-        </div>
-        <div>
-          <h3 style="margin-bottom:1rem;border-bottom:1px solid #e5e7eb;padding-bottom:.75rem;">Loyalty Programme</h3>
-          <div class="form-grid" style="grid-template-columns:1fr;">
-            <div><label>Points per ₦1,000 spent</label><input id="set-loyalty-rate" type="number" min="0" style="width:100%;" value="${s.loyaltyPointsRate||1}"></div>
-            <div><label>₦ value per point (redemption)</label><input id="set-loyalty-redeem" type="number" min="0" style="width:100%;" value="${s.loyaltyRedemptionRate||100}"></div>
-          </div>
-        </div>
-        <div>
-          <h3 style="margin-bottom:1rem;border-bottom:1px solid #e5e7eb;padding-bottom:.75rem;">Numbering Sequences</h3>
-          <div class="form-grid" style="grid-template-columns:1fr;">
-            <div><label>Invoice Prefix</label><input id="set-invpfx" style="width:100%;" value="${s.invoicePrefix}"></div>
-            <div><label>Receipt Prefix</label><input id="set-rcppfx" style="width:100%;" value="${s.receiptPrefix}"></div>
-            <div><label>Quote Prefix</label><input id="set-qtepfx" style="width:100%;" value="${s.quotePrefix}"></div>
-            <div><label>Next Invoice No.</label><input id="set-nextinv" type="number" style="width:100%;" value="${s.nextInvoiceNo}"></div>
-            <div><label>Next Receipt No.</label><input id="set-nextrcp" type="number" style="width:100%;" value="${s.nextReceiptNo}"></div>
-            <div><label>Next Quote No.</label><input id="set-nextqte" type="number" style="width:100%;" value="${s.nextQuoteNo}"></div>
-          </div>
+  $('#settings').innerHTML=`<div class="card">
+    <h2 style="margin-bottom:1.5rem;">System Settings</h2>
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:2rem;">
+      <div>
+        <h3 style="margin-bottom:1rem;border-bottom:1px solid #e5e7eb;padding-bottom:.75rem;">Company</h3>
+        <div class="form-grid" style="grid-template-columns:1fr;">
+          <div><label>Company Name</label><input id="set-cname" style="width:100%;" value="${s.companyName||''}"></div>
+          <div><label>Address</label><input id="set-addr" style="width:100%;" value="${s.address||''}"></div>
+          <div><label>Phone</label><input id="set-phone" style="width:100%;" value="${s.phone||''}"></div>
+          <div><label>Email</label><input id="set-email" style="width:100%;" value="${s.email||''}"></div>
         </div>
       </div>
-      <div style="margin-top:2rem;display:flex;gap:1rem;flex-wrap:wrap;">
-        <button onclick="saveSettings()">💾 Save Settings</button>
-        <button onclick="backupData()" style="background:#6b7280;">⬇ Backup Data (JSON)</button>
-        <button onclick="document.getElementById('restore-file').click()" style="background:#0891b2;">⬆ Restore Backup</button>
-        <input type="file" id="restore-file" accept=".json" style="display:none;" onchange="restoreData(this)">
-        <button onclick="resetAllData()" class="danger">⚠ Reset All Data</button>
+      <div>
+        <h3 style="margin-bottom:1rem;border-bottom:1px solid #e5e7eb;padding-bottom:.75rem;">Financial</h3>
+        <div class="form-grid" style="grid-template-columns:1fr;">
+          <div><label>Currency Symbol</label><input id="set-currency" style="width:100%;" value="${s.currency||'₦'}" maxlength="3"></div>
+          <div><label>VAT / Tax Rate (%)</label><input id="set-tax" type="number" min="0" style="width:100%;" value="${s.taxRate||0}"></div>
+          <div><label>Low Stock Threshold</label><input id="set-lowstock" type="number" min="1" style="width:100%;" value="${s.lowStockThreshold||10}"></div>
+        </div>
       </div>
-    </div>`;
+      <div>
+        <h3 style="margin-bottom:1rem;border-bottom:1px solid #e5e7eb;padding-bottom:.75rem;">Loyalty</h3>
+        <div class="form-grid" style="grid-template-columns:1fr;">
+          <div><label>Points per ₦1,000 spent</label><input id="set-lrate" type="number" min="0" style="width:100%;" value="${s.loyaltyPointsRate||1}"></div>
+          <div><label>₦ value per point</label><input id="set-lredeem" type="number" min="0" style="width:100%;" value="${s.loyaltyRedemptionRate||100}"></div>
+        </div>
+      </div>
+      <div>
+        <h3 style="margin-bottom:1rem;border-bottom:1px solid #e5e7eb;padding-bottom:.75rem;">Numbering</h3>
+        <div class="form-grid" style="grid-template-columns:1fr;">
+          <div><label>Invoice Prefix</label><input id="set-invpfx" style="width:100%;" value="${s.invoicePrefix||'INV'}"></div>
+          <div><label>Receipt Prefix</label><input id="set-rcppfx" style="width:100%;" value="${s.receiptPrefix||'RCP'}"></div>
+          <div><label>Quote Prefix</label><input id="set-qtepfx" style="width:100%;" value="${s.quotePrefix||'QTE'}"></div>
+          <div><label>Credit Note Prefix</label><input id="set-cnpfx" style="width:100%;" value="${s.creditNotePrefix||'CN'}"></div>
+          <div><label>Next Invoice No.</label><input id="set-nextinv" type="number" style="width:100%;" value="${s.nextInvoiceNo||1001}"></div>
+          <div><label>Next Receipt No.</label><input id="set-nextrcp" type="number" style="width:100%;" value="${s.nextReceiptNo||5001}"></div>
+          <div><label>Next Quote No.</label><input id="set-nextqte" type="number" style="width:100%;" value="${s.nextQuoteNo||2001}"></div>
+          <div><label>Next Purchase No.</label><input id="set-nextpur" type="number" style="width:100%;" value="${s.nextPurchaseNo||3001}"></div>
+        </div>
+      </div>
+    </div>
+    <div style="margin-top:2rem;">
+      <button onclick="saveSettings()">💾 Save Settings</button>
+    </div>
+  </div>`;
 }
 
-function saveSettings(){
-  const s=STATE.settings;
-  s.companyName=$('#set-cname').value.trim()||s.companyName;
-  s.address=$('#set-addr').value.trim();
-  s.phone=$('#set-phone').value.trim();
-  s.email=$('#set-email').value.trim();
-  s.currency=$('#set-currency').value.trim()||s.currency;
-  s.taxRate=parseFloat($('#set-tax').value)||s.taxRate;
-  s.lowStockThreshold=parseInt($('#set-lowstock').value)||s.lowStockThreshold;
-  s.loyaltyPointsRate=parseInt($('#set-loyalty-rate').value)||1;
-  s.loyaltyRedemptionRate=parseInt($('#set-loyalty-redeem').value)||100;
-  s.invoicePrefix=$('#set-invpfx').value.trim()||s.invoicePrefix;
-  s.receiptPrefix=$('#set-rcppfx').value.trim()||s.receiptPrefix;
-  s.quotePrefix=$('#set-qtepfx').value.trim()||s.quotePrefix;
-  s.nextInvoiceNo=parseInt($('#set-nextinv').value)||s.nextInvoiceNo;
-  s.nextReceiptNo=parseInt($('#set-nextrcp').value)||s.nextReceiptNo;
-  s.nextQuoteNo=parseInt($('#set-nextqte').value)||s.nextQuoteNo;
-  saveState();toast('Settings saved.','success');
-}
-
-function backupData(){
-  const blob=new Blob([JSON.stringify(STATE,null,2)],{type:'application/json'});
-  const url=URL.createObjectURL(blob);
-  const a=Object.assign(document.createElement('a'),{href:url,download:`cnjohnson_backup_${today()}.json`});
-  a.click();URL.revokeObjectURL(url);toast('Backup downloaded.','success');
-}
-function restoreData(input){
-  const file=input.files[0];if(!file)return;
-  const reader=new FileReader();
-  reader.onload=e=>{
-    try{
-      const data=JSON.parse(e.target.result);
-      if(!data.settings||!data.products)throw new Error('Invalid backup file.');
-      if(!confirm2('This will overwrite ALL current data. Continue?'))return;
-      STATE=data;saveState();toast('Data restored successfully.','success');showSection('dashboard');
-    }catch(err){toast('Restore failed: '+err.message,'error');}
+async function saveSettings(){
+  const payload={
+    companyName:$('#set-cname').value.trim()||null,
+    address:$('#set-addr').value.trim()||null,
+    phone:$('#set-phone').value.trim()||null,
+    email:$('#set-email').value.trim()||null,
+    currency:$('#set-currency').value.trim()||'₦',
+    taxRate:parseFloat($('#set-tax').value)||0,
+    lowStockThreshold:parseInt($('#set-lowstock').value)||10,
+    loyaltyPointsRate:parseFloat($('#set-lrate').value)||1,
+    loyaltyRedemptionRate:parseFloat($('#set-lredeem').value)||100,
+    invoicePrefix:$('#set-invpfx').value.trim()||'INV',
+    receiptPrefix:$('#set-rcppfx').value.trim()||'RCP',
+    quotePrefix:$('#set-qtepfx').value.trim()||'QTE',
+    creditNotePrefix:$('#set-cnpfx').value.trim()||'CN',
+    nextInvoiceNo:parseInt($('#set-nextinv').value)||STATE.settings.nextInvoiceNo,
+    nextReceiptNo:parseInt($('#set-nextrcp').value)||STATE.settings.nextReceiptNo,
+    nextQuoteNo:parseInt($('#set-nextqte').value)||STATE.settings.nextQuoteNo,
+    nextPurchaseNo:parseInt($('#set-nextpur').value)||STATE.settings.nextPurchaseNo,
   };
-  reader.readAsText(file);input.value='';
-}
-function resetAllData(){
-  if(!confirm2('⚠ This will permanently delete ALL data. Type RESET to confirm.'))return;
-  const ans=prompt('Type RESET to confirm:');
-  if(ans!=='RESET')return toast('Reset cancelled.','warn');
-  STATE=defaultState();saveState();toast('All data has been reset.','warn');showSection('dashboard');
+  await API.updateSettings(payload);
+  Object.assign(STATE.settings, payload);
+  toast('Settings saved.','success');
 }
 
 /* ════════════════════════════════════════════════════════════════
-   19. GLOBAL CSS INJECTION
+   20. REP ACTIVITY
    ════════════════════════════════════════════════════════════════ */
-(function injectGlobalStyles(){
-  const style=document.createElement('style');
-  style.textContent=`
+function renderRepActivity(){
+  const sec=document.getElementById('rep-activity'); if(!sec)return;
+  const repOpts=`<option value="">All Reps</option>`+STATE.salesReps.map(r=>`<option value="${r.id}">${r.name}</option>`).join('');
+  sec.innerHTML=`<div class="card">
+    <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:.75rem;margin-bottom:1.5rem;">
+      <h2 style="margin:0;">Sales Rep Activity</h2>
+      <div style="display:flex;gap:.75rem;flex-wrap:wrap;">
+        <select id="ra-rep" style="width:180px;" onchange="renderRepStats()">${repOpts}</select>
+        <input id="ra-from" type="date" style="width:150px;" value="${new Date(new Date().getFullYear(),new Date().getMonth(),1).toISOString().split('T')[0]}" onchange="renderRepStats()">
+        <input id="ra-to" type="date" style="width:150px;" value="${today()}" onchange="renderRepStats()">
+      </div>
+    </div>
+    <div id="ra-kpis" class="stats-grid" style="margin-bottom:1.5rem;"></div>
+    <div id="ra-scorecards" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:1rem;"></div>
+  </div>`;
+  renderRepStats();
+}
+
+function renderRepStats(){
+  const repFilter=$('#ra-rep')?.value||'';
+  const from=new Date($('#ra-from')?.value||'1970-01-01');
+  const to=new Date(($('#ra-to')?.value||today())+'T23:59:59');
+  const sales=STATE.sales.filter(s=>{
+    const d=new Date(s.date);
+    return d>=from&&d<=to&&s.type!=='payment'&&(!repFilter||s.repId===repFilter);
+  });
+  const rev=sales.reduce((a,s)=>a+s.total,0);
+  const disc=sales.reduce((a,s)=>a+(s.totalDiscountAmt||0),0);
+  const kpis=$('#ra-kpis');
+  if(kpis) kpis.innerHTML=`
+    <div class="stat-card" style="border-left:5px solid #2563eb;"><h3>Total Revenue</h3><div class="value">${fmt(rev)}</div><div style="font-size:.8rem;color:#64748b;">${sales.length} transactions</div></div>
+    <div class="stat-card" style="border-left:5px solid #10b981;"><h3>Avg. Ticket</h3><div class="value">${fmt(sales.length?rev/sales.length:0)}</div></div>
+    <div class="stat-card" style="border-left:5px solid #f59e0b;"><h3>Total Discounts</h3><div class="value">${fmt(disc)}</div></div>`;
+
+  const sc=$('#ra-scorecards');
+  if(!sc)return;
+  const target=STATE.settings.repDailyTarget||200000;
+  const tStr=today();
+  sc.innerHTML=STATE.salesReps.map(r=>{
+    const rS=sales.filter(s=>s.repId===r.id);
+    const rRev=rS.reduce((a,s)=>a+s.total,0);
+    const todayRev=STATE.sales.filter(s=>s.repId===r.id&&(s.date||'').startsWith(tStr)&&s.type!=='payment').reduce((a,s)=>a+s.total,0);
+    const pct=Math.min(todayRev/target*100,100).toFixed(0);
+    return `<div style="background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:1.25rem;">
+      <div style="display:flex;justify-content:space-between;margin-bottom:1rem;">
+        <div><div style="font-weight:700;">${r.name}</div><div style="font-size:.78rem;color:#64748b;">${getWarehouseName(r.warehouseId)}</div></div>
+        <div style="text-align:right;"><div style="font-size:.78rem;color:#64748b;">Commission</div><div style="font-weight:700;color:#7c3aed;">${fmt(rRev*r.commission/100)}</div></div>
+      </div>
+      <div style="margin-bottom:1rem;">
+        <div style="display:flex;justify-content:space-between;font-size:.78rem;color:#64748b;margin-bottom:.3rem;"><span>Today: ${fmt(todayRev)}</span><span>Target: ${fmt(target)}</span></div>
+        <div style="background:#e5e7eb;border-radius:4px;height:10px;overflow:hidden;">
+          <div style="background:${parseInt(pct)>=100?'#16a34a':parseInt(pct)>=70?'#f59e0b':'#2563eb'};height:100%;width:${pct}%;border-radius:4px;"></div>
+        </div>
+        <div style="font-size:.75rem;color:#64748b;margin-top:.2rem;">${pct}% of daily target</div>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:.5rem;font-size:.82rem;">
+        <div style="background:#f8fafc;border-radius:6px;padding:.5rem;"><div style="color:#64748b;">Period Revenue</div><div style="font-weight:700;color:#2563eb;">${fmt(rRev)}</div></div>
+        <div style="background:#f8fafc;border-radius:6px;padding:.5rem;"><div style="color:#64748b;">Transactions</div><div style="font-weight:700;">${rS.length}</div></div>
+      </div>
+    </div>`;
+  }).join('')||'<p style="color:#9ca3af;">No sales reps.</p>';
+}
+
+/* ════════════════════════════════════════════════════════════════
+   21. CSS
+   ════════════════════════════════════════════════════════════════ */
+(function injectCSS(){
+  const s=document.createElement('style');
+  s.textContent=`
     @keyframes modalIn{from{opacity:0;transform:scale(.95) translateY(-12px);}to{opacity:1;transform:none;}}
+    @keyframes spin{to{transform:rotate(360deg);}}
     label{display:block;font-size:.85rem;font-weight:600;color:#374151;margin-bottom:.35rem;}
     .badge{display:inline-block;padding:.2rem .65rem;border-radius:20px;font-size:.75rem;font-weight:700;}
     .badge-green{background:#d1fae5;color:#065f46;}
@@ -2708,997 +2398,72 @@ function resetAllData(){
     .badge-red{background:#fee2e2;color:#991b1b;}
     tfoot td{background:#f8fafc;font-weight:600;}
     @media(max-width:768px){.form-grid{grid-template-columns:1fr!important;}main{padding:1rem;}}
-    #dashboard-extended .stats-grid{margin-bottom:0;}
   `;
-  document.head.append(style);
+  document.head.append(s);
 })();
 
 /* ════════════════════════════════════════════════════════════════
-   20. INITIALIZATION
+   22. INIT
    ════════════════════════════════════════════════════════════════ */
-document.addEventListener('DOMContentLoaded',()=>{
-  const sections=['dashboard','warehouse','products','pos','customers','suppliers','sales-reps',
-    'purchases','invoices','quotes','bulk-discounts','credit-notes','expenses','reports','settings'];
+Object.assign(RENDERS, {
+  dashboard:       renderDashboard,
+  warehouse:       renderWarehouses,
+  products:        renderProducts,
+  pos:             renderPOS,
+  customers:       renderCustomers,
+  suppliers:       renderSuppliers,
+  'sales-reps':    renderSalesReps,
+  purchases:       renderPurchases,
+  invoices:        renderInvoices,
+  quotes:          renderQuotes,
+  'bulk-discounts':renderBulkDiscounts,
+  'credit-notes':  renderCreditNotes,
+  expenses:        renderExpenses,
+  reports:         renderReports,
+  settings:        renderSettings,
+  'rep-activity':  renderRepActivity,
+});
+
+document.addEventListener('DOMContentLoaded', async () => {
+  const sections=['dashboard','warehouse','products','pos','customers','suppliers',
+    'sales-reps','purchases','invoices','quotes','bulk-discounts',
+    'credit-notes','expenses','reports','settings','rep-activity'];
+
   sections.forEach(id=>{
     if(!document.getElementById(id)){
-      const sec=document.createElement('section');sec.id=id;$('main').append(sec);
+      const s=document.createElement('section');
+      s.id=id;
+      $('main')?.append(s);
     }
   });
 
   const dash=document.getElementById('dashboard');
-  if(dash&&!$('#dashboard-extended',dash)){
-    const ext=document.createElement('div');ext.id='dashboard-extended';dash.append(ext);
+  if(dash&&!document.getElementById('dashboard-extended')){
+    const ext=document.createElement('div');
+    ext.id='dashboard-extended';
+    dash.append(ext);
   }
 
-  // Add new nav links if HTML doesn't have them
   const navLinks=[
-    {href:'#quotes',text:'📄 Quotes',after:'#invoices'},
-    {href:'#bulk-discounts',text:'🏷 Bulk Discounts',after:'#pos'},
-    {href:'#credit-notes',text:'📝 Credit Notes',after:'#invoices'},
-    {href:'#expenses',text:'💸 Expenses',after:'#purchases'},
+    {href:'#quotes',          text:'📄 Quotes',          after:'#invoices'},
+    {href:'#bulk-discounts',  text:'🏷 Bulk Discounts',  after:'#pos'},
+    {href:'#credit-notes',    text:'📝 Credit Notes',    after:'#invoices'},
+    {href:'#expenses',        text:'💸 Expenses',        after:'#purchases'},
+    {href:'#rep-activity',    text:'📊 Rep Activity',    after:'#sales-reps'},
   ];
   navLinks.forEach(({href,text,after})=>{
     if(!$(`.sidebar a[href="${href}"]`)){
       const afterLink=$(`.sidebar a[href="${after}"]`);
       if(afterLink){
         const a=document.createElement('a');
-        a.href=href;a.innerHTML=text;
-        a.onclick=()=>showSection(href.slice(1));
+        a.href=href; a.innerHTML=text;
+        a.onclick=e=>{e.preventDefault();showSection(href.slice(1));};
         afterLink.after(a);
       }
     }
   });
 
-  showSection('dashboard');
+  // STATE is module-scoped only — not exposed on window.
+  // For debugging only: window._debug_STATE = STATE;
+  await showSection('dashboard');
 });
-
-//salesrep monitor
-/* ================================================================
-   SALES REP ACTIVITY MONITOR — Add-on for C.N. Johnson Ventures
-   salesrep_monitor.js
-   
-   HOW TO INTEGRATE:
-   1. Paste the entire contents of this file at the END of script.js,
-      just before the closing line of Section 20 (DOMContentLoaded).
-   2. In the DOMContentLoaded sections array, add 'rep-activity' :
-        const sections = ['dashboard','warehouse',...,'settings','rep-activity'];
-   3. In the navLinks array inside DOMContentLoaded, add:
-        { href:'#rep-activity', text:'📊 Rep Activity', after:'#sales-reps' },
-   ================================================================ */
-
-/* ════════════════════════════════════════════════════════════════
-   A.  ACTIVITY LOGGING — Called automatically on every sale action
-   ════════════════════════════════════════════════════════════════ */
-
-/**
- * Log a sales rep activity event.
- * @param {string} repId       — Rep's ID (e.g. 'R001')
- * @param {string} type        — Event type (see ACTIVITY_TYPES below)
- * @param {object} payload     — Context data for the event
- */
-function logRepActivity(repId, type, payload = {}) {
-  if (!repId) return;                         // Walk-in / no rep assigned
-  if (!STATE.repActivityLog) STATE.repActivityLog = [];
-
-  const rep = STATE.salesReps.find(r => r.id === repId);
-  STATE.repActivityLog.push({
-    id: uid(),
-    repId,
-    repName: rep ? rep.name : repId,
-    type,
-    date: nowISO(),
-    ...payload,
-  });
-
-  // Keep the log bounded (last 5000 events)
-  if (STATE.repActivityLog.length > 5000) {
-    STATE.repActivityLog = STATE.repActivityLog.slice(-5000);
-  }
-  saveState();
-}
-
-/* Activity type constants */
-const ACTIVITY_TYPES = {
-  SALE_COMPLETED:   'sale_completed',
-  SALE_CREDIT:      'sale_credit',
-  QUOTE_CREATED:    'quote_created',
-  QUOTE_CONVERTED:  'quote_converted',
-  DISCOUNT_APPLIED: 'discount_applied',
-  LARGE_SALE:       'large_sale',       // > ₦100,000
-  DAILY_TARGET_HIT: 'daily_target_hit',
-};
-
-/* ── PATCH completeSale() to emit activity events ────────────── */
-/* We wrap the original completeSale so the monitor fires without
-   modifying any existing code. */
-(function patchCompleteSale() {
-  const _original = window.completeSale || completeSale;
-
-  function patchedCompleteSale() {
-    // Capture pre-sale state so we can diff afterwards
-    const repId      = $('#pos-rep')  ? $('#pos-rep').value  : '';
-    const custId     = $('#pos-customer') ? $('#pos-customer').value : '';
-    const customer   = STATE.customers.find(c => c.id === custId);
-    const payment    = $('#pos-payment') ? $('#pos-payment').value : 'cash';
-    const cartSnapshot = posCart.map(i => ({ ...i }));   // shallow copy
-    const discountPct  = parseFloat($('#pos-discount')?.value) || 0;
-    const prevSaleCount = STATE.sales.length;
-
-    // Run the original function
-    _original();
-
-    // If a new sale was actually recorded (original fn may bail early)
-    if (STATE.sales.length <= prevSaleCount) return;
-
-    const newSale = STATE.sales[STATE.sales.length - 1];
-    if (!newSale || !repId) return;
-
-    const isCredit = payment === 'credit';
-    const hasBulkDisc = (newSale.totalBulkDisc || 0) > 0;
-    const hasManDisc  = discountPct > 0 || cartSnapshot.some(i => (i.manualDiscountPct || 0) > 0);
-
-    // Core sale activity
-    logRepActivity(repId, isCredit ? ACTIVITY_TYPES.SALE_CREDIT : ACTIVITY_TYPES.SALE_COMPLETED, {
-      saleId:       newSale.id,
-      ref:          newSale.invoiceNo || newSale.receiptNo,
-      customerId:   custId,
-      customerName: customer ? customer.name : 'Walk-in',
-      total:        newSale.total,
-      itemCount:    cartSnapshot.reduce((s, i) => s + i.qty, 0),
-      lineCount:    cartSnapshot.length,
-      paymentMethod: payment,
-      warehouseId:  posWarehouse,
-    });
-
-    // Discount event
-    if (hasBulkDisc || hasManDisc) {
-      logRepActivity(repId, ACTIVITY_TYPES.DISCOUNT_APPLIED, {
-        saleRef:       newSale.invoiceNo || newSale.receiptNo,
-        bulkDiscAmt:   newSale.totalBulkDisc || 0,
-        manualDiscAmt: newSale.totalManualDisc || 0,
-        extraDiscPct:  discountPct,
-        totalDiscAmt:  newSale.totalDiscountAmt || 0,
-      });
-    }
-
-    // Large sale flag
-    if (newSale.total >= 100000) {
-      logRepActivity(repId, ACTIVITY_TYPES.LARGE_SALE, {
-        saleRef: newSale.invoiceNo || newSale.receiptNo,
-        total:   newSale.total,
-      });
-    }
-
-    // Check daily target (configurable via settings, defaults to ₦200,000)
-    const dailyTarget = STATE.settings.repDailyTarget || 200000;
-    const todayStr    = today();
-    const todayTotal  = STATE.sales
-      .filter(s => s.repId === repId && s.date && s.date.startsWith(todayStr) && s.type !== 'payment')
-      .reduce((sum, s) => sum + (s.total || 0), 0);
-    const alreadyLogged = STATE.repActivityLog.some(
-      e => e.repId === repId && e.type === ACTIVITY_TYPES.DAILY_TARGET_HIT && e.date && e.date.startsWith(todayStr)
-    );
-    if (todayTotal >= dailyTarget && !alreadyLogged) {
-      logRepActivity(repId, ACTIVITY_TYPES.DAILY_TARGET_HIT, {
-        target:     dailyTarget,
-        achieved:   todayTotal,
-        achievedAt: nowISO(),
-      });
-    }
-  }
-
-  // Overwrite the global reference
-  window.completeSale = patchedCompleteSale;
-})();
-
-/* ── PATCH saveAsQuote() to log quote creation ───────────────── */
-(function patchSaveAsQuote() {
-  const _orig = window.saveAsQuote || saveAsQuote;
-  window.saveAsQuote = function () {
-    const repId   = $('#pos-rep') ? $('#pos-rep').value : '';
-    const custId  = $('#pos-customer') ? $('#pos-customer').value : '';
-    const prevLen = STATE.quotes.length;
-    _orig();
-    if (STATE.quotes.length > prevLen && repId) {
-      const q = STATE.quotes[STATE.quotes.length - 1];
-      logRepActivity(repId, ACTIVITY_TYPES.QUOTE_CREATED, {
-        quoteNo:      q.quoteNo,
-        customerId:   custId,
-        customerName: q.customerName,
-        total:        q.total,
-      });
-    }
-  };
-})();
-
-/* ── PATCH convertQuoteToSale() to log conversion ───────────── */
-(function patchConvertQuote() {
-  const _orig = window.convertQuoteToSale || convertQuoteToSale;
-  window.convertQuoteToSale = function (quoteId) {
-    const q = STATE.quotes.find(x => x.id === quoteId);
-    _orig(quoteId);
-    if (q) {
-      const repId = $('#pos-rep') ? $('#pos-rep').value : '';
-      if (repId) {
-        logRepActivity(repId, ACTIVITY_TYPES.QUOTE_CONVERTED, {
-          quoteNo:      q.quoteNo,
-          customerName: q.customerName,
-          total:        q.total,
-        });
-      }
-    }
-  };
-})();
-
-/* ════════════════════════════════════════════════════════════════
-   B.  REP ACTIVITY DASHBOARD — Section renderer
-   ════════════════════════════════════════════════════════════════ */
-function renderRepActivity() {
-  // Ensure log array exists (backward compat)
-  if (!STATE.repActivityLog) STATE.repActivityLog = [];
-
-  const sec = document.getElementById('rep-activity');
-  if (!sec) return;
-
-  const repOpts = `<option value="">All Reps</option>` +
-    STATE.salesReps.map(r => `<option value="${r.id}">${r.name}</option>`).join('');
-
-  sec.innerHTML = `
-    <div class="card">
-      <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:.75rem;margin-bottom:1.5rem;">
-        <div>
-          <h2 style="margin:0;">Sales Rep Activity Monitor</h2>
-          <p style="color:#64748b;font-size:.875rem;margin:.3rem 0 0;">
-            Real-time tracking of every rep's sales actions, discounts, quotes &amp; achievements.
-          </p>
-        </div>
-        <div style="display:flex;gap:.75rem;flex-wrap:wrap;">
-          <select id="ra-rep" style="width:180px;" onchange="refreshRepActivityPage()">
-            ${repOpts}
-          </select>
-          <input id="ra-from" type="date" style="width:150px;"
-            value="${new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().split('T')[0]}"
-            onchange="refreshRepActivityPage()">
-          <input id="ra-to" type="date" style="width:150px;" value="${today()}"
-            onchange="refreshRepActivityPage()">
-          <button onclick="exportRepActivityXLSX()" style="background:#16a34a;">⬇ Export</button>
-          <button onclick="printRepActivityReport()" style="background:#0891b2;">🖨 Print Report</button>
-        </div>
-      </div>
-
-      <!-- KPI Strip -->
-      <div id="ra-kpis" class="stats-grid" style="margin-bottom:1.5rem;"></div>
-
-      <!-- Leaderboard + Daily Trend side by side -->
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:1.5rem;margin-bottom:1.5rem;">
-        <div class="card" style="box-shadow:none;border:1px solid #e5e7eb;">
-          <h4 style="margin-bottom:1rem;">🏆 Rep Leaderboard (Period)</h4>
-          <div id="ra-leaderboard"></div>
-        </div>
-        <div class="card" style="box-shadow:none;border:1px solid #e5e7eb;">
-          <h4 style="margin-bottom:1rem;">📈 Daily Revenue Trend</h4>
-          <canvas id="ra-chart-daily" height="220"></canvas>
-        </div>
-      </div>
-
-      <!-- Performance by rep chart -->
-      <div class="card" style="box-shadow:none;border:1px solid #e5e7eb;margin-bottom:1.5rem;">
-        <h4 style="margin-bottom:1rem;">📊 Revenue by Rep (Period)</h4>
-        <canvas id="ra-chart-reps" height="160"></canvas>
-      </div>
-
-      <!-- Activity log table -->
-      <div class="card" style="box-shadow:none;border:1px solid #e5e7eb;">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem;">
-          <h4 style="margin:0;">Activity Log</h4>
-          <div style="display:flex;gap:.75rem;">
-            <select id="ra-type-filter" style="width:180px;" onchange="refreshRepActivityPage()">
-              <option value="">All Activity Types</option>
-              <option value="sale_completed">Cash/Transfer Sales</option>
-              <option value="sale_credit">Credit Sales</option>
-              <option value="quote_created">Quotes Created</option>
-              <option value="quote_converted">Quotes Converted</option>
-              <option value="discount_applied">Discounts Applied</option>
-              <option value="large_sale">Large Sales (₦100k+)</option>
-              <option value="daily_target_hit">Daily Target Achieved</option>
-            </select>
-          </div>
-        </div>
-        <div id="ra-log-table"></div>
-      </div>
-
-      <!-- Per-rep scorecards -->
-      <div class="card" style="box-shadow:none;border:1px solid #e5e7eb;margin-top:1.5rem;">
-        <h4 style="margin-bottom:1rem;">📋 Individual Rep Scorecards</h4>
-        <div id="ra-scorecards" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:1rem;"></div>
-      </div>
-
-      <!-- Daily target settings -->
-      <div class="card" style="box-shadow:none;border:1px solid #e5e7eb;margin-top:1.5rem;background:#f8fafc;">
-        <h4 style="margin-bottom:.75rem;">⚙ Monitor Settings</h4>
-        <div style="display:flex;align-items:center;gap:1.5rem;flex-wrap:wrap;">
-          <div>
-            <label>Daily Revenue Target per Rep (₦)</label>
-            <input id="ra-daily-target" type="number" min="0"
-              value="${STATE.settings.repDailyTarget || 200000}"
-              style="width:180px;margin-top:.3rem;">
-          </div>
-          <div style="padding-top:1.3rem;">
-            <button onclick="saveRepMonitorSettings()" style="background:#6b7280;">Save Target</button>
-          </div>
-          <div style="color:#64748b;font-size:.8rem;padding-top:1.3rem;">
-            A "Daily Target Hit" event is logged automatically when a rep crosses this threshold.
-          </div>
-        </div>
-      </div>
-    </div>`;
-
-  refreshRepActivityPage();
-}
-
-/* ── Refresh all widgets ─────────────────────────────────────── */
-function refreshRepActivityPage() {
-  const repFilter  = $('#ra-rep')?.value        || '';
-  const fromStr    = $('#ra-from')?.value       || '';
-  const toStr      = $('#ra-to')?.value         || '';
-  const typeFilter = $('#ra-type-filter')?.value || '';
-
-  const from = fromStr ? new Date(fromStr)                          : new Date('1970-01-01');
-  const to   = toStr   ? new Date(toStr + 'T23:59:59')              : new Date();
-
-  /* ── Filter log ── */
-  const log = (STATE.repActivityLog || []).filter(e => {
-    const d = new Date(e.date);
-    return d >= from && d <= to &&
-      (!repFilter  || e.repId === repFilter) &&
-      (!typeFilter || e.type  === typeFilter);
-  });
-
-  /* ── Filter sales for KPIs / charts ── */
-  const sales = STATE.sales.filter(s => {
-    const d = new Date(s.date);
-    return d >= from && d <= to && s.type !== 'payment' &&
-      (!repFilter || s.repId === repFilter);
-  });
-
-  renderRepKPIs(sales, log, from, to, repFilter);
-  renderRepLeaderboard(sales, from, to);
-  renderRepDailyChart(sales, from, to, repFilter);
-  renderRepBarChart(sales);
-  renderRepLogTable(log);
-  renderRepScorecards(from, to);
-}
-
-/* ── KPI strip ── */
-function renderRepKPIs(sales, log, from, to, repFilter) {
-  const totalRevenue  = sales.reduce((s, x) => s + (x.total || 0), 0);
-  const totalTxns     = sales.filter(s => !s.type || s.type !== 'payment').length;
-  const avgTicket     = totalTxns ? totalRevenue / totalTxns : 0;
-  const discountEvents = log.filter(e => e.type === ACTIVITY_TYPES.DISCOUNT_APPLIED);
-  const totalDiscGiven = discountEvents.reduce((s, e) => s + (e.totalDiscAmt || 0), 0);
-  const quotesCreated  = log.filter(e => e.type === ACTIVITY_TYPES.QUOTE_CREATED).length;
-  const quotesConverted = log.filter(e => e.type === ACTIVITY_TYPES.QUOTE_CONVERTED).length;
-  const convRate = quotesCreated ? ((quotesConverted / quotesCreated) * 100).toFixed(0) + '%' : '—';
-  const targetHits = log.filter(e => e.type === ACTIVITY_TYPES.DAILY_TARGET_HIT).length;
-
-  const kpiEl = $('#ra-kpis');
-  if (!kpiEl) return;
-  kpiEl.innerHTML = `
-    <div class="stat-card" style="border-left:5px solid #2563eb;">
-      <h3>Total Revenue</h3>
-      <div class="value">${fmt(totalRevenue)}</div>
-      <div style="font-size:.8rem;color:#64748b;">${totalTxns} transactions</div>
-    </div>
-    <div class="stat-card" style="border-left:5px solid #10b981;">
-      <h3>Avg. Transaction</h3>
-      <div class="value">${fmt(avgTicket)}</div>
-      <div style="font-size:.8rem;color:#64748b;">per sale</div>
-    </div>
-    <div class="stat-card" style="border-left:5px solid #f59e0b;">
-      <h3>Total Discounts Given</h3>
-      <div class="value">${fmt(totalDiscGiven)}</div>
-      <div style="font-size:.8rem;color:#64748b;">${discountEvents.length} discount events</div>
-    </div>
-    <div class="stat-card" style="border-left:5px solid #0891b2;">
-      <h3>Quote Conversion</h3>
-      <div class="value">${convRate}</div>
-      <div style="font-size:.8rem;color:#64748b;">${quotesConverted} / ${quotesCreated} quotes</div>
-    </div>
-    <div class="stat-card" style="border-left:5px solid #8b5cf6;">
-      <h3>Daily Targets Hit</h3>
-      <div class="value">${targetHits}</div>
-      <div style="font-size:.8rem;color:#64748b;">days target was met</div>
-    </div>
-    <div class="stat-card" style="border-left:5px solid #f43f5e;">
-      <h3>Large Sales (₦100k+)</h3>
-      <div class="value">${(STATE.repActivityLog||[]).filter(e=>e.type===ACTIVITY_TYPES.LARGE_SALE&&(!$('#ra-rep')?.value||e.repId===$('#ra-rep')?.value)).length}</div>
-      <div style="font-size:.8rem;color:#64748b;">in selected period</div>
-    </div>`;
-}
-
-/* ── Leaderboard ── */
-function renderRepLeaderboard(sales, from, to) {
-  const el = $('#ra-leaderboard');
-  if (!el) return;
-
-  const ranked = STATE.salesReps.map(r => {
-    const rSales = sales.filter(s => s.repId === r.id);
-    const rev    = rSales.reduce((a, s) => a + (s.total || 0), 0);
-    const txns   = rSales.length;
-    const disc   = rSales.reduce((a, s) => a + (s.totalDiscountAmt || 0), 0);
-    return { ...r, periodRevenue: rev, periodTxns: txns, periodDisc: disc };
-  }).sort((a, b) => b.periodRevenue - a.periodRevenue);
-
-  if (!ranked.length || ranked.every(r => r.periodRevenue === 0)) {
-    el.innerHTML = '<p style="color:#9ca3af;text-align:center;padding:1rem;">No sales in this period.</p>';
-    return;
-  }
-
-  const medals = ['🥇', '🥈', '🥉'];
-  const maxRev = ranked[0].periodRevenue || 1;
-
-  el.innerHTML = ranked.map((r, i) => `
-    <div style="display:flex;align-items:center;gap:.75rem;margin-bottom:1rem;">
-      <div style="font-size:1.5rem;width:2rem;text-align:center;">${medals[i] || (i + 1)}</div>
-      <div style="flex:1;">
-        <div style="display:flex;justify-content:space-between;margin-bottom:.2rem;">
-          <span style="font-weight:600;">${r.name}</span>
-          <span style="font-weight:700;color:#2563eb;">${fmt(r.periodRevenue)}</span>
-        </div>
-        <div style="background:#e5e7eb;border-radius:4px;height:8px;overflow:hidden;">
-          <div style="background:${i===0?'#f59e0b':i===1?'#6b7280':'#cd7c3c'};height:100%;
-            width:${(r.periodRevenue/maxRev*100).toFixed(1)}%;border-radius:4px;transition:width .4s;"></div>
-        </div>
-        <div style="font-size:.75rem;color:#64748b;margin-top:.2rem;">
-          ${r.periodTxns} sales &nbsp;|&nbsp; ${fmt(r.commission/100*r.periodRevenue)} commission
-        </div>
-      </div>
-    </div>`).join('');
-}
-
-/* ── Daily trend line chart ── */
-let raCharts = {};
-function renderRepDailyChart(sales, from, to, repFilter) {
-  if (raCharts['ra-chart-daily']) { raCharts['ra-chart-daily'].destroy(); delete raCharts['ra-chart-daily']; }
-  const canvas = document.getElementById('ra-chart-daily');
-  if (!canvas) return;
-
-  // Build date → revenue map
-  const dateMap = {};
-  for (let d = new Date(from); d <= to; d.setDate(d.getDate() + 1)) {
-    dateMap[d.toISOString().split('T')[0]] = 0;
-  }
-  sales.forEach(s => {
-    const k = (s.date || '').split('T')[0];
-    if (k in dateMap) dateMap[k] += s.total || 0;
-  });
-
-  const labels = Object.keys(dateMap).sort();
-  const data   = labels.map(k => dateMap[k]);
-
-  const datasets = [];
-
-  // If a specific rep is chosen, also show overall for context
-  if (repFilter) {
-    const allDateMap = {};
-    labels.forEach(k => allDateMap[k] = 0);
-    STATE.sales.filter(s => {
-      const d = new Date(s.date);
-      return d >= from && d <= to && s.type !== 'payment';
-    }).forEach(s => {
-      const k = (s.date || '').split('T')[0];
-      if (k in allDateMap) allDateMap[k] += s.total || 0;
-    });
-    datasets.push({
-      label: 'All Reps',
-      data: labels.map(k => allDateMap[k]),
-      borderColor: '#d1d5db', backgroundColor: 'transparent',
-      borderDash: [4, 4], tension: .4, pointRadius: 0,
-    });
-  }
-
-  const rep = STATE.salesReps.find(r => r.id === repFilter);
-  datasets.push({
-    label: rep ? rep.name : 'All Reps',
-    data,
-    borderColor: '#2563eb',
-    backgroundColor: 'rgba(37,99,235,.08)',
-    fill: true, tension: .4, pointRadius: 3,
-  });
-
-  // Daily target line
-  const target = STATE.settings.repDailyTarget || 200000;
-  datasets.push({
-    label: 'Daily Target',
-    data: labels.map(() => target),
-    borderColor: '#f59e0b',
-    borderDash: [6, 3],
-    pointRadius: 0,
-    backgroundColor: 'transparent',
-  });
-
-  raCharts['ra-chart-daily'] = new Chart(canvas, {
-    type: 'line',
-    data: { labels: labels.map(l => l.slice(5)), datasets },
-    options: {
-      responsive: true,
-      plugins: { legend: { position: 'bottom' } },
-      scales: {
-        y: { beginAtZero: true, ticks: { callback: v => '₦' + (v/1000).toFixed(0) + 'k' } },
-      },
-    },
-  });
-}
-
-/* ── Bar chart: revenue by rep ── */
-function renderRepBarChart(sales) {
-  if (raCharts['ra-chart-reps']) { raCharts['ra-chart-reps'].destroy(); delete raCharts['ra-chart-reps']; }
-  const canvas = document.getElementById('ra-chart-reps');
-  if (!canvas) return;
-
-  const repRevs = STATE.salesReps.map(r => ({
-    name: r.name,
-    rev:  sales.filter(s => s.repId === r.id).reduce((a, s) => a + (s.total || 0), 0),
-    disc: sales.filter(s => s.repId === r.id).reduce((a, s) => a + (s.totalDiscountAmt || 0), 0),
-  })).filter(r => r.rev > 0);
-
-  if (!repRevs.length) return;
-
-  raCharts['ra-chart-reps'] = new Chart(canvas, {
-    type: 'bar',
-    data: {
-      labels: repRevs.map(r => r.name),
-      datasets: [
-        { label: 'Revenue',  data: repRevs.map(r => r.rev),  backgroundColor: '#2563eb' },
-        { label: 'Discounts Given', data: repRevs.map(r => r.disc), backgroundColor: '#f59e0b' },
-      ],
-    },
-    options: {
-      responsive: true,
-      plugins: { legend: { position: 'bottom' } },
-      scales: { y: { beginAtZero: true, ticks: { callback: v => '₦' + v.toLocaleString() } } },
-    },
-  });
-}
-
-/* ── Activity log table ── */
-const ACTIVITY_LABELS = {
-  sale_completed:   { label: 'Sale (Cash)',      color: '#16a34a', icon: '✅' },
-  sale_credit:      { label: 'Sale (Credit)',     color: '#2563eb', icon: '📄' },
-  quote_created:    { label: 'Quote Created',     color: '#0891b2', icon: '📝' },
-  quote_converted:  { label: 'Quote Converted',   color: '#7c3aed', icon: '🔄' },
-  discount_applied: { label: 'Discount Applied',  color: '#f59e0b', icon: '🏷' },
-  large_sale:       { label: 'Large Sale ₦100k+', color: '#dc2626', icon: '🔥' },
-  daily_target_hit: { label: 'Daily Target Hit',  color: '#d97706', icon: '🏆' },
-};
-
-function renderRepLogTable(log) {
-  const el = $('#ra-log-table');
-  if (!el) return;
-
-  if (!log.length) {
-    el.innerHTML = '<p style="color:#9ca3af;text-align:center;padding:2rem;">No activity in this period.</p>';
-    return;
-  }
-
-  const sorted = [...log].sort((a, b) => new Date(b.date) - new Date(a.date)).slice(0, 200);
-
-  el.innerHTML = `
-    <div style="max-height:480px;overflow-y:auto;">
-      <table>
-        <thead><tr>
-          <th>Date &amp; Time</th>
-          <th>Rep</th>
-          <th>Activity</th>
-          <th>Reference</th>
-          <th>Customer</th>
-          <th>Amount</th>
-          <th>Detail</th>
-        </tr></thead>
-        <tbody>
-          ${sorted.map(e => {
-            const meta = ACTIVITY_LABELS[e.type] || { label: e.type, color: '#6b7280', icon: '•' };
-            let ref    = e.ref || e.quoteNo || '—';
-            let cust   = e.customerName || '—';
-            let amount = '';
-            let detail = '';
-
-            if (e.type === ACTIVITY_TYPES.SALE_COMPLETED || e.type === ACTIVITY_TYPES.SALE_CREDIT) {
-              amount = fmt(e.total || 0);
-              detail = `${e.lineCount || 0} line(s), ${e.itemCount || 0} unit(s) via ${e.paymentMethod || '—'}`;
-            } else if (e.type === ACTIVITY_TYPES.DISCOUNT_APPLIED) {
-              amount = `-${fmt(e.totalDiscAmt || 0)}`;
-              detail = `Bulk: ${fmt(e.bulkDiscAmt || 0)} | Manual: ${fmt(e.manualDiscAmt || 0)} | Extra: ${e.extraDiscPct || 0}%`;
-            } else if (e.type === ACTIVITY_TYPES.QUOTE_CREATED || e.type === ACTIVITY_TYPES.QUOTE_CONVERTED) {
-              amount = fmt(e.total || 0);
-              detail = e.type === ACTIVITY_TYPES.QUOTE_CONVERTED ? 'Loaded into POS' : 'Saved from POS';
-            } else if (e.type === ACTIVITY_TYPES.LARGE_SALE) {
-              amount = fmt(e.total || 0);
-              detail = '₦100,000+ transaction';
-            } else if (e.type === ACTIVITY_TYPES.DAILY_TARGET_HIT) {
-              amount = fmt(e.achieved || 0);
-              detail = `Target was ${fmt(e.target || 0)}`;
-            }
-
-            return `
-              <tr>
-                <td style="white-space:nowrap;font-size:.82rem;">${new Date(e.date).toLocaleString('en-NG')}</td>
-                <td><strong>${e.repName}</strong></td>
-                <td>
-                  <span style="background:${meta.color}20;color:${meta.color};border-radius:20px;
-                    font-size:.75rem;font-weight:700;padding:.2rem .65rem;white-space:nowrap;">
-                    ${meta.icon} ${meta.label}
-                  </span>
-                </td>
-                <td style="font-family:monospace;font-size:.82rem;">${ref}</td>
-                <td style="font-size:.85rem;">${cust}</td>
-                <td style="font-weight:700;${amount.startsWith('-')?'color:#dc2626;':'color:#16a34a;'}">${amount}</td>
-                <td style="font-size:.8rem;color:#64748b;">${detail}</td>
-              </tr>`;
-          }).join('')}
-        </tbody>
-      </table>
-    </div>
-    <p style="color:#9ca3af;font-size:.78rem;margin-top:.5rem;text-align:right;">
-      Showing last ${Math.min(sorted.length, 200)} of ${log.length} events
-    </p>`;
-}
-
-/* ── Individual scorecards ── */
-function renderRepScorecards(from, to) {
-  const el = $('#ra-scorecards');
-  if (!el) return;
-
-  const todayStr = today();
-  const log      = STATE.repActivityLog || [];
-
-  el.innerHTML = STATE.salesReps.map(r => {
-    const rSales = STATE.sales.filter(s => {
-      const d = new Date(s.date);
-      return d >= from && d <= to && s.repId === r.id && s.type !== 'payment';
-    });
-    const rev          = rSales.reduce((a, s) => a + (s.total || 0), 0);
-    const txns         = rSales.length;
-    const avgTicket    = txns ? rev / txns : 0;
-    const discTotal    = rSales.reduce((a, s) => a + (s.totalDiscountAmt || 0), 0);
-    const creditSales  = rSales.filter(s => s.paymentStatus === 'unpaid').length;
-    const largeSales   = rSales.filter(s => (s.total || 0) >= 100000).length;
-    const quotesCreated = log.filter(e => e.repId === r.id && e.type === ACTIVITY_TYPES.QUOTE_CREATED &&
-      new Date(e.date) >= from && new Date(e.date) <= to).length;
-    const quotesConv   = log.filter(e => e.repId === r.id && e.type === ACTIVITY_TYPES.QUOTE_CONVERTED &&
-      new Date(e.date) >= from && new Date(e.date) <= to).length;
-    const targetHits   = log.filter(e => e.repId === r.id && e.type === ACTIVITY_TYPES.DAILY_TARGET_HIT &&
-      new Date(e.date) >= from && new Date(e.date) <= to).length;
-    const commission   = rev * r.commission / 100;
-
-    // Today's stats
-    const todaySales = rSales.filter(s => (s.date || '').startsWith(todayStr));
-    const todayRev   = todaySales.reduce((a, s) => a + (s.total || 0), 0);
-    const target     = STATE.settings.repDailyTarget || 200000;
-    const pct        = Math.min((todayRev / target) * 100, 100).toFixed(0);
-
-    const convRate = quotesCreated ? ((quotesConv / quotesCreated) * 100).toFixed(0) : 0;
-
-    return `
-      <div style="background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:1.25rem;
-        box-shadow:0 1px 4px rgba(0,0,0,.06);">
-        <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:1rem;">
-          <div>
-            <div style="font-weight:700;font-size:1rem;">${r.name}</div>
-            <div style="font-size:.78rem;color:#64748b;">${getWarehouseName(r.warehouseId)}</div>
-          </div>
-          <div style="text-align:right;">
-            <div style="font-size:.78rem;color:#64748b;">Commission</div>
-            <div style="font-weight:700;color:#7c3aed;">${fmt(commission)}</div>
-          </div>
-        </div>
-
-        <!-- Today's progress bar -->
-        <div style="margin-bottom:1rem;">
-          <div style="display:flex;justify-content:space-between;font-size:.78rem;color:#64748b;margin-bottom:.3rem;">
-            <span>Today: ${fmt(todayRev)}</span>
-            <span>Target: ${fmt(target)}</span>
-          </div>
-          <div style="background:#e5e7eb;border-radius:4px;height:10px;overflow:hidden;">
-            <div style="background:${pct >= 100 ? '#16a34a' : pct >= 70 ? '#f59e0b' : '#2563eb'};
-              height:100%;width:${pct}%;border-radius:4px;transition:width .4s;"></div>
-          </div>
-          <div style="font-size:.75rem;color:#64748b;margin-top:.2rem;">${pct}% of daily target</div>
-        </div>
-
-        <!-- Stats grid -->
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:.5rem;font-size:.82rem;">
-          <div style="background:#f8fafc;border-radius:6px;padding:.5rem;">
-            <div style="color:#64748b;">Period Revenue</div>
-            <div style="font-weight:700;color:#2563eb;">${fmt(rev)}</div>
-          </div>
-          <div style="background:#f8fafc;border-radius:6px;padding:.5rem;">
-            <div style="color:#64748b;">Transactions</div>
-            <div style="font-weight:700;">${txns}</div>
-          </div>
-          <div style="background:#f8fafc;border-radius:6px;padding:.5rem;">
-            <div style="color:#64748b;">Avg. Ticket</div>
-            <div style="font-weight:700;">${fmt(avgTicket)}</div>
-          </div>
-          <div style="background:#f8fafc;border-radius:6px;padding:.5rem;">
-            <div style="color:#64748b;">Discounts Given</div>
-            <div style="font-weight:700;color:#f59e0b;">${fmt(discTotal)}</div>
-          </div>
-          <div style="background:#f8fafc;border-radius:6px;padding:.5rem;">
-            <div style="color:#64748b;">Quote Conv. Rate</div>
-            <div style="font-weight:700;color:#7c3aed;">${convRate}%</div>
-          </div>
-          <div style="background:#f8fafc;border-radius:6px;padding:.5rem;">
-            <div style="color:#64748b;">Large Sales</div>
-            <div style="font-weight:700;color:#dc2626;">${largeSales} 🔥</div>
-          </div>
-          <div style="background:#f8fafc;border-radius:6px;padding:.5rem;">
-            <div style="color:#64748b;">Credit Sales</div>
-            <div style="font-weight:700;">${creditSales}</div>
-          </div>
-          <div style="background:${targetHits > 0 ? '#fef9c3' : '#f8fafc'};border-radius:6px;padding:.5rem;">
-            <div style="color:#64748b;">Target Days Hit</div>
-            <div style="font-weight:700;color:#d97706;">${targetHits} 🏆</div>
-          </div>
-        </div>
-      </div>`;
-  }).join('') || '<p style="color:#9ca3af;">No sales reps set up yet.</p>';
-}
-
-/* ── Print report ── */
-function printRepActivityReport() {
-  const repFilter = $('#ra-rep')?.value || '';
-  const fromStr   = $('#ra-from')?.value || '';
-  const toStr     = $('#ra-to')?.value   || '';
-  const from      = fromStr ? new Date(fromStr) : new Date('1970-01-01');
-  const to        = toStr   ? new Date(toStr + 'T23:59:59') : new Date();
-
-  const sales = STATE.sales.filter(s => {
-    const d = new Date(s.date);
-    return d >= from && d <= to && s.type !== 'payment' && (!repFilter || s.repId === repFilter);
-  });
-
-  const repsToShow = repFilter
-    ? STATE.salesReps.filter(r => r.id === repFilter)
-    : STATE.salesReps;
-
-  const s = STATE.settings;
-  const win = window.open('', '_blank', 'width=820,height:900');
-  if (!win) return;
-
-  const repRows = repsToShow.map(r => {
-    const rSales = sales.filter(x => x.repId === r.id);
-    const rev    = rSales.reduce((a, x) => a + (x.total || 0), 0);
-    const txns   = rSales.length;
-    const disc   = rSales.reduce((a, x) => a + (x.totalDiscountAmt || 0), 0);
-    const comm   = rev * r.commission / 100;
-    const avgT   = txns ? rev / txns : 0;
-    return `<tr>
-      <td>${r.name}</td>
-      <td style="text-align:center;">${txns}</td>
-      <td style="text-align:right;">${fmt(rev)}</td>
-      <td style="text-align:right;">${fmt(avgT)}</td>
-      <td style="text-align:right;color:#f59e0b;">${fmt(disc)}</td>
-      <td style="text-align:right;color:#7c3aed;">${fmt(comm)}</td>
-    </tr>`;
-  }).join('');
-
-  const log = (STATE.repActivityLog || [])
-    .filter(e => {
-      const d = new Date(e.date);
-      return d >= from && d <= to && (!repFilter || e.repId === repFilter);
-    })
-    .sort((a, b) => new Date(b.date) - new Date(a.date))
-    .slice(0, 300);
-
-  const logRows = log.map(e => {
-    const meta = ACTIVITY_LABELS[e.type] || { label: e.type, icon: '' };
-    let amount = '';
-    if (e.total)       amount = fmt(e.total);
-    if (e.totalDiscAmt) amount = `-${fmt(e.totalDiscAmt)}`;
-    if (e.achieved)     amount = fmt(e.achieved);
-    return `<tr>
-      <td>${new Date(e.date).toLocaleString('en-NG')}</td>
-      <td>${e.repName}</td>
-      <td>${meta.icon} ${meta.label}</td>
-      <td>${e.ref || e.quoteNo || '—'}</td>
-      <td>${e.customerName || '—'}</td>
-      <td style="text-align:right;">${amount}</td>
-    </tr>`;
-  }).join('');
-
-  win.document.write(`<!DOCTYPE html><html><head><title>Rep Activity Report</title>
-    <style>
-      body{font-family:Arial,sans-serif;font-size:12px;max-width:900px;margin:0 auto;padding:1rem;}
-      h1{color:#1e40af;font-size:18px;}h2{font-size:14px;color:#374151;margin-top:1.5rem;}
-      table{width:100%;border-collapse:collapse;margin-bottom:1rem;}
-      th{background:#1e40af;color:#fff;padding:6px 8px;text-align:left;}
-      td{border-bottom:1px solid #e5e7eb;padding:5px 8px;}
-      tr:nth-child(even){background:#f8fafc;}
-      .header{display:flex;justify-content:space-between;}
-      @media print{button{display:none;}}
-    </style></head><body>
-    <div class="header">
-      <div><h1>${s.companyName}</h1><p>${s.address} | ${s.phone}</p></div>
-      <div style="text-align:right;">
-        <h1>Sales Rep Activity Report</h1>
-        <p>Period: ${fromStr||'All time'} to ${toStr||today()}</p>
-        <p>Generated: ${new Date().toLocaleString('en-NG')}</p>
-      </div>
-    </div>
-    <h2>Rep Performance Summary</h2>
-    <table>
-      <thead><tr>
-        <th>Rep Name</th><th style="text-align:center;">Transactions</th>
-        <th style="text-align:right;">Revenue</th><th style="text-align:right;">Avg. Ticket</th>
-        <th style="text-align:right;">Discounts Given</th><th style="text-align:right;">Commission</th>
-      </tr></thead>
-      <tbody>${repRows}</tbody>
-    </table>
-    <h2>Activity Log (latest ${log.length} events)</h2>
-    <table>
-      <thead><tr><th>Date/Time</th><th>Rep</th><th>Activity</th><th>Reference</th><th>Customer</th><th style="text-align:right;">Amount</th></tr></thead>
-      <tbody>${logRows}</tbody>
-    </table>
-    <button onclick="window.print()" style="padding:.5rem 1.5rem;cursor:pointer;margin-top:1rem;">🖨 Print</button>
-    </body></html>`);
-  win.document.close();
-}
-
-/* ── Export to XLSX ── */
-function exportRepActivityXLSX() {
-  const repFilter = $('#ra-rep')?.value || '';
-  const fromStr   = $('#ra-from')?.value || '';
-  const toStr     = $('#ra-to')?.value   || '';
-  const from      = fromStr ? new Date(fromStr) : new Date('1970-01-01');
-  const to        = toStr   ? new Date(toStr + 'T23:59:59') : new Date();
-
-  const log = (STATE.repActivityLog || []).filter(e => {
-    const d = new Date(e.date);
-    return d >= from && d <= to && (!repFilter || e.repId === repFilter);
-  }).sort((a, b) => new Date(b.date) - new Date(a.date));
-
-  const sales = STATE.sales.filter(s => {
-    const d = new Date(s.date);
-    return d >= from && d <= to && s.type !== 'payment' && (!repFilter || s.repId === repFilter);
-  });
-
-  // Sheet 1: activity log
-  const logRows = log.map(e => {
-    const meta = ACTIVITY_LABELS[e.type] || { label: e.type };
-    return {
-      'Date/Time':    new Date(e.date).toLocaleString('en-NG'),
-      'Rep Name':     e.repName,
-      'Activity':     meta.label,
-      'Reference':    e.ref || e.quoteNo || '',
-      'Customer':     e.customerName || '',
-      'Total (₦)':   e.total || e.achieved || '',
-      'Discount (₦)':e.totalDiscAmt || '',
-      'Detail':       e.paymentMethod || e.detail || '',
-    };
-  });
-
-  // Sheet 2: rep summary
-  const summaryRows = STATE.salesReps.map(r => {
-    const rSales = sales.filter(s => s.repId === r.id);
-    const rev  = rSales.reduce((a, s) => a + (s.total || 0), 0);
-    const txns = rSales.length;
-    const disc = rSales.reduce((a, s) => a + (s.totalDiscountAmt || 0), 0);
-    return {
-      'Rep Name':          r.name,
-      'Warehouse':         getWarehouseName(r.warehouseId),
-      'Transactions':      txns,
-      'Revenue (₦)':       rev,
-      'Avg. Ticket (₦)':   txns ? Math.round(rev / txns) : 0,
-      'Discounts Given (₦)': disc,
-      'Commission %':      r.commission,
-      'Commission Earned (₦)': Math.round(rev * r.commission / 100),
-    };
-  });
-
-  const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(logRows),    'Activity Log');
-  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(summaryRows),'Rep Summary');
-  XLSX.writeFile(wb, `cnjohnson_rep_activity_${today()}.xlsx`);
-  toast('Rep activity exported.', 'success');
-}
-
-/* ── Settings save ── */
-function saveRepMonitorSettings() {
-  const t = parseInt($('#ra-daily-target')?.value) || 200000;
-  STATE.settings.repDailyTarget = t;
-  saveState();
-  toast(`Daily target set to ${fmt(t)} per rep.`, 'success');
-}
-
-/* ════════════════════════════════════════════════════════════════
-   C.  WIRE INTO MAIN APP
-   Replace EVERYTHING from the line:
-     "document.addEventListener('DOMContentLoaded', async () => {"
-   near the bottom of script.js (the salesrep_monitor section C)
-   with this block. Keep everything above it unchanged.
-   ════════════════════════════════════════════════════════════════ */
-
-/* ── Settings save ── */
-function saveRepMonitorSettings() {
-  const t = parseInt($('#ra-daily-target')?.value) || 200000;
-  STATE.settings.repDailyTarget = t;
-  saveState();
-  toast(`Daily target set to ${fmt(t)} per rep.`, 'success');
-}
-
-/*
-  SINGLE init block — handles both "DOM not yet ready" and
-  "DOM already loaded" without firing twice.
-  We use a named flag so even if this script is eval'd multiple
-  times it only runs once.
-*/
-if (!window._cnjAppInited) {
-  window._cnjAppInited = true;
-
-  function _initApp() {
-    // Guard: don't run twice if somehow called again
-    if (window._cnjAppInitDone) return;
-    window._cnjAppInitDone = true;
-
-    // 1. Ensure state properties exist and expose globally
-    if (!STATE.repActivityLog) STATE.repActivityLog = [];
-    window.STATE = STATE;
-
-    // 2. Add rep-activity section if missing
-    if (!document.getElementById('rep-activity')) {
-      const section = document.createElement('section');
-      section.id = 'rep-activity';
-      document.querySelector('main')?.appendChild(section);
-    }
-
-    // 3. Add sidebar nav link (after Sales Reps)
-    const salesRepLink = document.querySelector('.sidebar a[href="#sales-reps"]');
-    if (salesRepLink && !document.querySelector('.sidebar a[href="#rep-activity"]')) {
-      const repLink = document.createElement('a');
-      repLink.href = '#rep-activity';
-      repLink.innerHTML = '📊 Rep Activity';
-      repLink.onclick = () => showSection('rep-activity');
-      salesRepLink.after(repLink);
-    }
-
-    // 4. Patch showSection to handle rep-activity
-    if (typeof window.showSection === 'function') {
-      const _origShow = window.showSection;
-      window.showSection = function (sectionId) {
-        _origShow(sectionId);
-        if (sectionId === 'rep-activity' && typeof renderRepActivity === 'function') {
-          renderRepActivity();
-        }
-      };
-    }
-
-    // 5. Pull backend data THEN show dashboard
-    //    (keeps UI showing while fetch is in progress)
-    showSection('dashboard');
-
-    if (window.SYNC) {
-      window.SYNC.pullAll()
-        .then(() => {
-          console.log('Backend data pulled successfully');
-          // Refresh whatever section is currently active
-          const activeSection = document.querySelector('section.active');
-          if (activeSection) showSection(activeSection.id);
-        })
-        .catch(err => console.error('Failed to pull data from backend:', err));
-
-      if (typeof window.SYNC.ping === 'function') {
-        window.SYNC.ping();
-      }
-    } else {
-      console.warn('SYNC module not found — running in localStorage-only mode');
-    }
-  }
-
-  // Fire immediately if DOM is ready, otherwise wait
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', _initApp, { once: true });
-  } else {
-    _initApp();
-  }
-}

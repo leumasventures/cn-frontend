@@ -3,10 +3,16 @@
  * Include on every protected page BEFORE any inline scripts.
  * DO NOT also include auth.js — this file replaces it entirely.
  *
+ * localStorage usage is LIMITED TO AUTH TOKENS ONLY:
+ *   cnj_access_token, cnj_refresh_token, cnjohnson_auth, cnjohnson_token_expiry
+ *
+ * NO business/app data is stored in localStorage.
+ * All products, sales, customers, etc. are fetched from the DB on every page load.
+ *
  * Provides:
  *  - CNJ.token        — current access token (always fresh)
  *  - CNJ.fetch(url, opts) — drop-in fetch wrapper that auto-refreshes on 401
- *  - CNJ.logout()     — clears auth and redirects
+ *  - CNJ.logout()     — clears auth tokens and redirects
  */
 (() => {
   'use strict';
@@ -17,10 +23,10 @@
 
   if (PUBLIC_PAGES.includes(currentPage)) return;
 
-  /* ── Storage keys — must match api-sync.js exactly ── */
+  // ── Auth token keys (the ONLY things stored in localStorage) ──────
   const K = {
-    token:   'cnj_access_token',       // ← fixed (was cnjohnson_access_token)
-    refresh: 'cnj_refresh_token',      // ← fixed (was cnjohnson_refresh_token)
+    token:   'cnj_access_token',
+    refresh: 'cnj_refresh_token',
     auth:    'cnjohnson_auth',
     expiry:  'cnjohnson_token_expiry',
   };
@@ -32,16 +38,16 @@
   function setTokens(access, refresh, expiresIn) {
     localStorage.setItem(K.token, access);
     if (refresh) localStorage.setItem(K.refresh, refresh);
-    const ms = expiresIn ? expiresIn * 1000 : 60 * 60 * 1000; // default 1 hour
+    const ms = expiresIn ? expiresIn * 1000 : 60 * 60 * 1000;
     localStorage.setItem(K.expiry, Date.now() + ms);
   }
 
   function clearAuth() {
-    // Only remove auth keys — never wipe all of localStorage (would destroy app state)
+    // Remove ONLY auth keys — app state is in-memory (STATE) and the DB, not localStorage
     [K.token, K.refresh, K.auth, K.expiry].forEach(k => localStorage.removeItem(k));
   }
 
-  /* ── Token refresh ── */
+  // ── Token refresh ────────────────────────────────────────────────
   let _refreshPromise = null;
 
   async function refreshToken() {
@@ -73,7 +79,7 @@
     return result;
   }
 
-  /* ── Guard: check auth on page load ── */
+  // ── Guard: check auth on page load ───────────────────────────────
   const token = getToken();
   const auth  = getAuth();
 
@@ -82,7 +88,6 @@
     return;
   }
 
-  /* Check expiry — try refresh before kicking out */
   const expiry = Number(localStorage.getItem(K.expiry) || 0);
   if (expiry && Date.now() > expiry) {
     refreshToken().then(newToken => {
@@ -93,7 +98,7 @@
     });
   }
 
-  /* ── Role guards ── */
+  // ── Role guards ──────────────────────────────────────────────────
   const role = auth.role;
   if (role === 'CASHIER' && currentPage !== 'pos.html') {
     window.location.replace('pos.html');
@@ -105,7 +110,7 @@
     return;
   }
 
-  /* ── CNJ global ── */
+  // ── CNJ global ───────────────────────────────────────────────────
   window.CNJ = {
     user:      auth,
     role,
@@ -144,12 +149,13 @@
     },
 
     logout() {
+      // Clears ONLY auth tokens — no other localStorage keys are used by this app
       clearAuth();
       window.location.replace('login.html');
     },
   };
 
-  /* Silently refresh token 1 minute before expiry */
+  // Silently refresh token 1 minute before expiry
   const msUntilExpiry = expiry ? expiry - Date.now() : 0;
   const refreshIn     = Math.max(msUntilExpiry - 60_000, 0);
   if (refreshIn < 14 * 60 * 1000) {

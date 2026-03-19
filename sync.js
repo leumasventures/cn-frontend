@@ -59,19 +59,61 @@
     if (!Array.isArray(serverArr) || !serverArr.length) return localArr;
     const merged = [...localArr];
     serverArr.forEach(serverItem => {
-      const idx          = merged.findIndex(
+      const idx        = merged.findIndex(
         l => l._apiId === serverItem.id || l.id === serverItem.id
       );
-      const mapped       = mapProduct(serverItem);
-      const serverFlat   = parseInt(serverItem.stock) || 0;
+      const mapped     = mapProduct(serverItem);
+      const serverFlat = mapped._serverTotal || 0;
 
       if (idx >= 0) {
-        const existing   = merged[idx];
-        const localTotal = Object.values(existing.stock || {}).reduce((a, b) => a + b, 0);
-        // Keep local per-warehouse map if totals match; use server value if changed elsewhere
-        const finalStock = localTotal === serverFlat ? existing.stock : mapped.stock;
+        const existing  = merged[idx];
+        // Compute local total, ignoring all sentinel keys
+        const localKeys = Object.keys(existing.stock || {})
+          .filter(k => k !== '__server_total__' && k !== '__default__' && k !== '_serverTotal');
+        const localTotal = localKeys.reduce((a, k) => a + (existing.stock[k] || 0), 0);
+
+        let finalStock;
+        if (localTotal === serverFlat) {
+          // Totals match — local per-warehouse split is still valid
+          finalStock = existing.stock;
+        } else {
+          // Server total differs (stock changed on another device).
+          // Scale existing proportions to new total, or assign to first warehouse.
+          const warehouses = window.STATE?.warehouses || [];
+          if (localKeys.length === 0 || localTotal === 0) {
+            finalStock = {};
+            if (warehouses.length > 0) {
+              warehouses.forEach((wh, i) => { finalStock[wh.id] = i === 0 ? serverFlat : 0; });
+            } else {
+              finalStock['__default__'] = serverFlat;
+            }
+          } else {
+            finalStock = {};
+            localKeys.forEach(k => {
+              finalStock[k] = Math.round((existing.stock[k] / localTotal) * serverFlat);
+            });
+            // Fix rounding drift on the first warehouse key
+            const scaledTotal = Object.values(finalStock).reduce((a, b) => a + b, 0);
+            if (scaledTotal !== serverFlat && localKeys[0]) {
+              finalStock[localKeys[0]] = Math.max(
+                0,
+                finalStock[localKeys[0]] + (serverFlat - scaledTotal)
+              );
+            }
+          }
+        }
+        mapped.stock = finalStock;
         merged[idx] = { ...existing, ...mapped, stock: finalStock, _apiId: serverItem.id };
       } else {
+        // Brand-new product — assign all stock to first warehouse
+        const warehouses = window.STATE?.warehouses || [];
+        const stock      = {};
+        if (warehouses.length > 0) {
+          warehouses.forEach((wh, i) => { stock[wh.id] = i === 0 ? serverFlat : 0; });
+        } else {
+          stock['__default__'] = serverFlat;
+        }
+        mapped.stock = stock;
         merged.push({ ...mapped, _apiId: serverItem.id });
       }
     });
@@ -91,14 +133,7 @@
   }
 
   function mapProduct(s) {
-    const flatStock  = parseInt(s.stock) || 0;
-    const warehouses = window.STATE?.warehouses || [];
-    const stock      = {};
-    if (warehouses.length > 0) {
-      warehouses.forEach((wh, idx) => { stock[wh.id] = idx === 0 ? flatStock : 0; });
-    } else {
-      stock['__default__'] = flatStock;
-    }
+    const flatStock = parseInt(s.stock) || 0;
     return {
       id:           s.id,
       _apiId:       s.id,
@@ -106,13 +141,15 @@
       sku:          s.sku          || '',
       barcode:      s.barcode      || '',
       category:     s.category?.name || s.category || '',
+      categoryId:   s.categoryId   || s.category?.id || null,
       unit:         s.unit         || '',
-      costPrice:    parseFloat(s.costPrice)                       || 0,
-      sellingPrice: parseFloat(s.price       || s.sellingPrice)   || 0,
+      costPrice:    parseFloat(s.costPrice)                         || 0,
+      sellingPrice: parseFloat(s.price       || s.sellingPrice)     || 0,
       reorderLevel: parseInt(s.lowStockThreshold || s.reorderLevel) || 10,
       supplierId:   s.supplierId   || '',
       description:  s.description  || '',
-      stock,
+      _serverTotal: flatStock,   // used by mergeProducts; cleaned up in post-merge step
+      stock:        {},          // mergeProducts fills this in
     };
   }
 
@@ -155,7 +192,6 @@
       name:        s.name,
       phone:       s.phone             || '',
       email:       s.email             || '',
-      // warehouse can come back as a nested object or just an id
       warehouseId: s.warehouseId || s.warehouse?.id || '',
       commission:  parseFloat(s.commission) || 2,
       totalSales:  parseFloat(s.totalSales) || 0,
@@ -163,48 +199,52 @@
   }
 
   function mapSale(s) {
-    // items may be nested SaleItem objects from the DB
     const items = (s.items || []).map(i => ({
-      productId:  i.productId,
-      name:       i.product?.name || i.productName || '',
-      unit:       i.product?.unit || i.unit        || '',
-      qty:        i.qty,
-      unitPrice:  parseFloat(i.price)    || 0,
-      costPrice:  parseFloat(i.product?.costPrice || i.costPrice) || 0,
-      discount:   parseFloat(i.discount) || 0,
-      total:      parseFloat(i.total)    || 0,
+      productId:            i.productId,
+      name:                 i.product?.name || i.productName || '',
+      unit:                 i.product?.unit || i.unit        || '',
+      qty:                  i.qty,
+      unitPrice:            parseFloat(i.price)    || 0,
+      costPrice:            parseFloat(i.product?.costPrice || i.costPrice) || 0,
+      discount:             parseFloat(i.discount) || 0,
+      total:                parseFloat(i.total)    || 0,
       bulkDiscountPct:      i.bulkDiscountPct      || 0,
       manualDiscountPct:    i.manualDiscountPct     || 0,
       effectiveDiscountPct: i.effectiveDiscountPct  || 0,
       lineDiscount:         i.lineDiscount          || 0,
     }));
 
+    // The DB Sale schema has a single `discount` field.
+    // Map it to totalDiscountAmt only — not to both bulk and total —
+    // to avoid double-counting in reports.
+    const discountAmt = parseFloat(s.totalDiscountAmt || s.discount) || 0;
+
     return {
-      id:              s.id,
-      _apiId:          s.id,
-      receiptNo:       s.receiptNo      || null,
-      invoiceNo:       s.invoiceNo      || null,
-      customerId:      s.customerId     || '',
-      customerName:    s.customer?.name || s.customerName || 'Walk-in',
-      repId:           s.repId          || '',
-      repName:         s.repName        || '',
-      warehouseId:     s.warehouseId    || '',
+      id:               s.id,
+      _apiId:           s.id,
+      receiptNo:        s.receiptNo      || null,
+      invoiceNo:        s.invoiceNo      || null,
+      customerId:       s.customerId     || '',
+      customerName:     s.customer?.name || s.customerName || 'Walk-in',
+      repId:            s.repId          || '',
+      repName:          s.repName        || '',
+      warehouseId:      s.warehouseId    || '',
       items,
-      subtotal:        parseFloat(s.subtotal)  || 0,
-      totalBulkDisc:   parseFloat(s.totalBulkDisc  || s.discount) || 0,
-      totalManualDisc: parseFloat(s.totalManualDisc) || 0,
-      extraDiscPct:    parseFloat(s.extraDiscPct)    || 0,
-      extraDiscAmt:    parseFloat(s.extraDiscAmt)    || 0,
-      totalDiscountAmt:parseFloat(s.totalDiscountAmt || s.discount) || 0,
-      taxAmt:          parseFloat(s.taxAmt || s.tax) || 0,
-      redeemPts:       parseInt(s.redeemPts   || s.pointsRedeemed) || 0,
-      redeemVal:       parseFloat(s.redeemVal) || 0,
-      total:           parseFloat(s.total)     || 0,
-      paymentMethod:   (s.paymentMethod || 'cash').toLowerCase(),
-      paymentStatus:   s.paymentStatus  || 'paid',
-      date:            s.createdAt || s.date || new Date().toISOString(),
-      notes:           s.note || s.notes || '',
-      type:            s.type || undefined,
+      subtotal:         parseFloat(s.subtotal)        || 0,
+      totalBulkDisc:    parseFloat(s.totalBulkDisc)   || 0,  // no s.discount fallback
+      totalManualDisc:  parseFloat(s.totalManualDisc)  || 0,
+      extraDiscPct:     parseFloat(s.extraDiscPct)     || 0,
+      extraDiscAmt:     parseFloat(s.extraDiscAmt)     || 0,
+      totalDiscountAmt: discountAmt,                          // single source of truth
+      taxAmt:           parseFloat(s.taxAmt || s.tax)  || 0,
+      redeemPts:        parseInt(s.redeemPts || s.pointsRedeemed) || 0,
+      redeemVal:        parseFloat(s.redeemVal)        || 0,
+      total:            parseFloat(s.total)            || 0,
+      paymentMethod:    (s.paymentMethod || 'cash').toLowerCase(),
+      paymentStatus:    s.paymentStatus  || 'paid',
+      date:             s.createdAt || s.date || new Date().toISOString(),
+      notes:            s.note || s.notes || '',
+      type:             s.type || undefined,
     };
   }
 
@@ -218,11 +258,11 @@
       warehouseId:   s.warehouseId   || '',
       warehouseName: s.warehouse?.name || s.warehouseName || '',
       items:         (s.items || []).map(i => ({
-        productId:   i.productId,
-        name:        i.product?.name || i.productName || '',
-        unit:        i.product?.unit || i.unit        || '',
-        qty:         i.qty,
-        cost:        parseFloat(i.costPrice) || 0,
+        productId: i.productId,
+        name:      i.product?.name || i.productName || '',
+        unit:      i.product?.unit || i.unit        || '',
+        qty:       i.qty,
+        cost:      parseFloat(i.costPrice) || 0,
       })),
       grandTotal:    parseFloat(s.total || s.grandTotal) || 0,
       paymentStatus: s.paymentStatus || 'paid',
@@ -259,7 +299,7 @@
       taxAmt:       parseFloat(s.taxAmt || s.tax) || 0,
       total:        parseFloat(s.total)        || 0,
       validDays:    parseInt(s.validDays)      || 7,
-      status:       s.status       || 'pending',
+      status:       (s.status || 'pending').toLowerCase(), // DB returns uppercase enum
       date:         s.createdAt || s.date || new Date().toISOString(),
       notes:        s.note || s.notes || '',
     };
@@ -317,6 +357,26 @@
     return null;
   }
 
+  /* ── Unwrap the sync/all response robustly ───────────────── */
+  // Backend may return any of these shapes after api_layer wraps it:
+  //   res.data = { products, warehouses, … }            ← direct payload
+  //   res.data = { data: { products, warehouses, … } }  ← nested data key
+  //   res.data = { success, data: { products, … } }     ← success + nested
+  function unwrapSyncResponse(res) {
+    const d1 = res?.data;
+    if (!d1) return null;
+
+    // d1 has known collection keys — use directly
+    if (d1.products || d1.warehouses || d1.customers || d1.sales) return d1;
+
+    // d1.data has collection keys — one level deeper
+    const d2 = d1?.data;
+    if (d2 && (d2.products || d2.warehouses || d2.customers || d2.sales)) return d2;
+
+    // Fall back to d1 and let extractArray return null for missing keys
+    return d1;
+  }
+
   /* ── Main pull ───────────────────────────────────────────── */
   async function pullAll() {
     setStatus('syncing');
@@ -324,7 +384,7 @@
     let serverData;
     try {
       const res = await window.API.fetchAll();
-      serverData = res?.data?.data || res?.data;
+      serverData = unwrapSyncResponse(res);
     } catch (err) {
       console.warn('[SYNC] Could not reach backend:', err.message);
       setStatus('offline');
@@ -356,7 +416,7 @@
 
     const ST = window.STATE;
 
-    // 1. Warehouses first (mapProduct needs them)
+    // 1. Warehouses first (mergeProducts needs them)
     const warehouses = extractArray(serverData, 'warehouses');
     if (warehouses) ST.warehouses = mergeArray(ST.warehouses, warehouses, mapWarehouse);
 
@@ -372,8 +432,8 @@
     const suppliers = extractArray(serverData, 'suppliers');
     if (suppliers) ST.suppliers = mergeArray(ST.suppliers, suppliers, mapSupplier);
 
-    // 5. Sales Reps — backend returns { data: [...] } OR { salesReps: [...] }
-    const salesReps = extractArray(serverData, 'salesReps', 'data');
+    // 5. Sales Reps — no 'data' fallback to avoid accidentally merging wrong array
+    const salesReps = extractArray(serverData, 'salesReps');
     if (salesReps) ST.salesReps = mergeArray(ST.salesReps, salesReps, mapSalesRep);
 
     // 6. Sales
@@ -404,14 +464,29 @@
     if (serverData.settings)
       ST.settings = { ...ST.settings, ...mapSettings(serverData.settings) };
 
-    /* Fix sentinel stock keys if warehouses weren't ready earlier */
+    // 13. Post-merge stock cleanup
     const firstWhId = ST.warehouses?.[0]?.id;
     if (firstWhId) {
       ST.products.forEach(p => {
+        // Migrate __default__ stock to first warehouse
         if (p.stock?.['__default__'] !== undefined) {
-          p.stock[firstWhId] = p.stock['__default__'];
+          p.stock[firstWhId] = (p.stock[firstWhId] || 0) + p.stock['__default__'];
           delete p.stock['__default__'];
         }
+
+        // Clean up all sentinel keys from stock object
+        delete p.stock?.['__server_total__'];
+        delete p.stock?.['_serverTotal'];
+
+        // If no real warehouse keys have stock but _serverTotal is on the
+        // product object itself, assign it to the first warehouse
+        const whKeys        = ST.warehouses.map(w => w.id);
+        const hasAnyWhStock = whKeys.some(k => (p.stock?.[k] ?? -1) >= 0);
+        if (!hasAnyWhStock && (p._serverTotal || 0) > 0) {
+          if (!p.stock) p.stock = {};
+          p.stock[firstWhId] = p._serverTotal;
+        }
+        delete p._serverTotal;
       });
     }
 
