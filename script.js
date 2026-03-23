@@ -61,7 +61,10 @@ const STATE = {
    ════════════════════════════════════════════════════════════════ */
 const $ = (sel, ctx = document) => ctx.querySelector(sel);
 const $$ = (sel, ctx = document) => [...ctx.querySelectorAll(sel)];
-const sym   = () => STATE.settings.currency || '₦';
+const sym = () => {
+  const c = STATE.settings.currency || '₦';
+  return c === 'USD' ? '₦' : c;
+};
 const fmt   = n  => sym() + Number(n || 0).toLocaleString('en-NG', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const fmtNum= n  => Number(n || 0).toLocaleString('en-NG');
 const uid   = () => Math.random().toString(36).slice(2, 10).toUpperCase();
@@ -195,20 +198,26 @@ const mapWarehouse = s => ({
 });
 
 const mapProduct = s => {
-  const flatStock = parseInt(s.stock) || 0;
   const stock = {};
-  if (STATE.warehouses.length) {
-    STATE.warehouses.forEach((w, i) => { stock[w.id] = i === 0 ? flatStock : 0; });
+  if (Array.isArray(s.warehouseStock) && s.warehouseStock.length) {
+    s.warehouseStock.forEach(ws => { stock[ws.warehouseId] = ws.quantity || 0; });
   } else {
-    stock['__default__'] = flatStock;
+    const flatStock = parseInt(s.stock) || 0;
+    if (s.warehouseId) {
+      stock[s.warehouseId] = flatStock;
+    } else if (STATE.warehouses.length) {
+      STATE.warehouses.forEach((w, i) => { stock[w.id] = i === 0 ? flatStock : 0; });
+    } else {
+      stock['__default__'] = flatStock;
+    }
   }
   return {
     id: s.id, name: s.name || '', sku: s.sku || '',
     barcode: s.barcode || '', description: s.description || '',
-    sellingPrice: parseFloat(s.price) || 0,
+    sellingPrice: parseFloat(s.sellingPrice || s.price) || 0,
     costPrice: parseFloat(s.costPrice) || 0,
     unit: s.unit || '', active: s.active !== false,
-    reorderLevel: parseInt(s.lowStockThreshold) || 10,
+    reorderLevel: parseInt(s.reorderLevel || s.lowStockThreshold) || 10,
     category: s.category?.name || s.category || '',
     categoryId: s.categoryId || null,
     supplierId: s.supplierId || '',
@@ -240,8 +249,8 @@ const mapSalesRep = s => ({
   id: s.id, name: s.name || '',
   email: s.email || '', phone: s.phone || '',
   warehouseId: s.warehouseId || '',
-  commission: parseFloat(s.commission) || 2,
-  totalSales: parseFloat(s.totalSales) || 0,
+  commission: s.commission != null ? parseFloat(s.commission) : 0,
+  totalSales: s.totalSales != null ? parseFloat(s.totalSales) : '',
   active: s.active !== false,
 });
 
@@ -370,6 +379,7 @@ const mapSettings = s => {
   const map = {
     companyName: s.companyName, address: s.address, phone: s.phone,
     email: s.email, currency: s.currency, taxRate: s.taxRate,
+    currency: s.currency === 'USD' ? '₦' : (s.currency || '₦'),
     lowStockThreshold: s.lowStockThreshold,
     invoicePrefix: s.invoicePrefix, receiptPrefix: s.receiptPrefix,
     quotePrefix: s.quotePrefix, creditNotePrefix: s.creditNotePrefix,
@@ -832,13 +842,8 @@ function openAddProduct() {
   modal('Add Product', productFormHTML(), async (overlay, close) => {
     const name  = $('#pf-name', overlay).value.trim();
     const price = parseFloat($('#pf-sell', overlay).value);
-    if (!name)      return toast('Name required.', 'warn');
+    if (!name)        return toast('Name required.', 'warn');
     if (isNaN(price)) return toast('Selling price required.', 'warn');
-
-    let totalStockQty = 0;
-    STATE.warehouses.forEach(w => {
-      totalStockQty += parseInt($(`#ps-${w.id}`, overlay).value) || 0;
-    });
 
     await API.createProduct({
       name,
@@ -847,12 +852,14 @@ function openAddProduct() {
       description:      $('#pf-desc',   overlay).value.trim() || null,
       price,
       costPrice:        parseFloat($('#pf-cost',    overlay).value) || 0,
-      stock:            totalStockQty,
-      lowStockThreshold:parseInt($('#pf-reorder', overlay).value) || 10,
+      lowStockThreshold:parseInt($('#pf-reorder',   overlay).value) || 10,
       unit:             $('#pf-unit', overlay).value.trim() || null,
       supplierId:       $('#pf-sup',  overlay).value || null,
-      warehouseId:      $('#pf-wh',   overlay).value || null,
       category:         $('#pf-cat',  overlay).value.trim() || null,
+      warehouseStocks:  STATE.warehouses.map(w => ({
+        warehouseId: w.id,
+        quantity:    parseInt($(`#ps-${w.id}`, overlay).value) || 0,
+      })),
     });
     close(); await refreshSection('products'); toast('Product added.', 'success');
   });
@@ -861,12 +868,9 @@ function openAddProduct() {
 function editProduct(id) {
   const p = STATE.products.find(x => x.id === id); if (!p) return;
   modal(`Edit – ${p.name}`, productFormHTML(p), async (overlay, close) => {
-    const oldCost = p.costPrice, oldSell = p.sellingPrice;
+    const oldCost = p.costPrice,  oldSell = p.sellingPrice;
     const newCost = parseFloat($('#pf-cost', overlay).value) || p.costPrice;
     const newSell = parseFloat($('#pf-sell', overlay).value) || p.sellingPrice;
-
-    let totalStockQty = 0;
-    STATE.warehouses.forEach(w => { totalStockQty += parseInt($(`#ps-${w.id}`, overlay).value) || 0; });
 
     await API.updateProduct(id, {
       name:             $('#pf-name',    overlay).value.trim() || p.name,
@@ -875,12 +879,14 @@ function editProduct(id) {
       description:      $('#pf-desc',   overlay).value.trim() || null,
       price:            newSell,
       costPrice:        newCost,
-      stock:            totalStockQty,
       lowStockThreshold:parseInt($('#pf-reorder', overlay).value) || p.reorderLevel,
       unit:             $('#pf-unit', overlay).value.trim() || null,
       supplierId:       $('#pf-sup',  overlay).value || null,
-      warehouseId:      $('#pf-wh',   overlay).value || null,
       category:         $('#pf-cat',  overlay).value.trim() || null,
+      warehouseStocks:  STATE.warehouses.map(w => ({
+        warehouseId: w.id,
+        quantity:    parseInt($(`#ps-${w.id}`, overlay).value) || 0,
+      })),
     });
 
     if (oldCost !== newCost || oldSell !== newSell) {
@@ -1287,11 +1293,8 @@ async function completeSale() {
     return toast(`Credit limit of ${fmt(cust.creditLimit)} would be exceeded.`,'error');
 
   const pointsEarned=Math.floor(total/1000*(STATE.settings.loyaltyPointsRate||1));
-  const receiptNo = isCredit ? nextInvoiceNo() : nextReceiptNo();
 
   const payload = {
-    receiptNo,
-    invoiceNo:      isCredit ? receiptNo : null,
     customerId:     custId || null,
     salesRepId:     repId  || null,
     warehouseId:    posWarehouse || null,
@@ -1311,10 +1314,14 @@ async function completeSale() {
   try {
     const result = await API.createSale(payload);
     const discMsg = (totalDiscount+extraDiscAmt)>0 ? ` (saved ${fmt(totalDiscount+extraDiscAmt)})` : '';
-    toast(`${isCredit?'Invoice':'Receipt'} ${receiptNo} recorded. Total: ${fmt(total)}${discMsg}`, 'success');
-
+    const ref = result?.sale?.receiptNo || result?.sale?.invoiceNo || '';
+    toast(`${isCredit?'Invoice':'Receipt'} ${ref} recorded. Total: ${fmt(total)}${discMsg}`, 'success');
+    
     const localSale = {
-      ...payload, id: result?.id || result?.sale?.id || uid(),
+      ...payload,
+      id:        result?.sale?.id || uid(),
+      receiptNo: result?.sale?.receiptNo || '',
+      invoiceNo: result?.sale?.invoiceNo || null,
       customerName: cust?.name||'Walk-in',
       repName: STATE.salesReps.find(r=>r.id===repId)?.name||'',
       items: posCart.map((item,i)=>({...item,...saleItems[i], lineDiscount: saleItems[i].total*saleItems[i].discount/100, effectiveDiscountPct: saleItems[i].discount })),

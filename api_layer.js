@@ -100,7 +100,7 @@
                   categoryId, supplierId, warehouseId              */
     getProducts:   ()      => get('/products'),
     createProduct: d       => post('/products', d),
-    updateProduct: (id, d) => put(`/products/${id}`, d),
+    updateProduct: (id, d) => patch(`/products/${id}`, d),
     deleteProduct: id      => del(`/products/${id}`),
     adjustStock:   (id, d) => patch(`/products/${id}/stock`, d),
 
@@ -190,7 +190,7 @@
                   nextReceiptNo, nextQuoteNo, nextCreditNoteNo,
                   nextPurchaseNo                                   */
     getSettings:    ()  => get('/settings'),
-    updateSettings: d   => put('/settings', d),
+    updateSettings: d   => patch('/settings', d),
   };
 
   console.log('[API] Ready →', BASE);
