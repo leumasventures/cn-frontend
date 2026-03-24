@@ -4,19 +4,23 @@
 //   Email:    admin@cnjohnsonventures.com
 //   Password: Admin@CNJ2026!
 //
-// KEY FIX: `role` is NOT sent in the login payload.
-//   The old code sent role: selectedRole (e.g. "admin") but the DB stores
-//   it as "ADMIN" (uppercase). This caused silent auth failures on many
-//   backends. The server should derive role from the DB, not the client.
-//
-// localStorage stores auth tokens ONLY — no business/app data.
+// Auth tokens stored in Secure cookies (not localStorage) so sessions
+// work correctly across all devices on the same domain.
 
 (() => {
 'use strict';
 
-const API_URL = 'https://cn-active-backend-1.onrender.com';
+const API_URL  = 'https://cn-active-backend-1.onrender.com';
+const IS_HTTPS = location.protocol === 'https:';
 
-// ── DOM elements ───────────────────────────────────────────────────
+/* ── Cookie helper ──────────────────────────────────────────────── */
+function setCookie(name, value, maxAgeSeconds) {
+  const age    = maxAgeSeconds ? `; max-age=${maxAgeSeconds}` : '';
+  const secure = IS_HTTPS ? '; Secure' : '';
+  document.cookie = `${name}=${encodeURIComponent(value)}${age}; path=/; SameSite=Lax${secure}`;
+}
+
+/* ── DOM elements ───────────────────────────────────────────────── */
 const emailInput = document.querySelector(
   'input[type="email"], input#email, input[name="email"], input[placeholder*="mail" i]'
 );
@@ -26,7 +30,7 @@ const signInBtn = Array.from(document.querySelectorAll('button, input[type="subm
 const signUpLink = Array.from(document.querySelectorAll('button, a'))
   .find(el => /sign\s*up|register/i.test(el.textContent || el.value));
 
-// ── Error display ──────────────────────────────────────────────────
+/* ── Error display ──────────────────────────────────────────────── */
 const errorBox = (() => {
   const existing = document.getElementById('cnj-error');
   if (existing) return existing;
@@ -71,92 +75,80 @@ function setLoading(on) {
   signInBtn.setAttribute('aria-busy', String(on));
 }
 
-// Enter key submits
 [emailInput, passInput].forEach(inp =>
   inp?.addEventListener('keydown', e => { if (e.key === 'Enter') signInBtn?.click(); })
 );
 
-// ── Main login handler ─────────────────────────────────────────────
+/* ── Main login handler ─────────────────────────────────────────── */
 signInBtn?.addEventListener('click', async () => {
   clearError();
   const email    = (emailInput?.value || '').trim();
   const password = (passInput?.value  || '').trim();
 
-  if (!email || !password) {
-    showError('Please enter your email and password.');
-    return;
-  }
-  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
-    showError('Please enter a valid email address.');
-    emailInput?.focus();
-    return;
-  }
-  if (password.length < 6) {
-    showError('Password must be at least 6 characters.');
-    passInput?.focus();
-    return;
-  }
+  if (!email || !password) { showError('Please enter your email and password.'); return; }
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) { showError('Please enter a valid email address.'); emailInput?.focus(); return; }
+  if (password.length < 6) { showError('Password must be at least 6 characters.'); passInput?.focus(); return; }
 
   setLoading(true);
+  console.log('[CNJ Login] Sending request...');
+
   try {
-    // ── Send ONLY email + password. Role comes from the DB. ──────
     const res = await fetch(`${API_URL}/api/auth/login`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ email, password }),
     });
 
-    // Always try to parse JSON even on error (backend sends error messages as JSON)
+    console.log('[CNJ Login] Response status:', res.status);
+
     let data;
-    try {
-      data = await res.json();
-    } catch {
+    try { data = await res.json(); } catch {
       showError(`Server error (${res.status}). Please try again.`);
       return;
     }
 
+    console.log('[CNJ Login] Response data:', JSON.stringify(data));
+
+    if (res.status === 403 && data?.code === 'PENDING_APPROVAL') {
+      setCookie('cnj_pending_email', email);
+      window.location.href = 'pending.html';
+      return;
+    }
+
     if (!res.ok) {
-      const msg =
-        data?.message || data?.error || data?.msg ||
-        `Login failed (${res.status}). Check your credentials and try again.`;
-      showError(msg);
+      showError(data?.message || data?.error || data?.msg || `Login failed (${res.status}).`);
       console.error('[CNJ Login] ❌', res.status, data);
       return;
     }
 
-    // Validate response shape
-    if (!data.accessToken) {
-      showError('No access token returned. Please contact support.');
-      console.error('[CNJ Login] Response missing accessToken:', data);
-      return;
-    }
-    if (!data.user) {
-      showError('No user data returned. Please contact support.');
-      console.error('[CNJ Login] Response missing user:', data);
-      return;
-    }
+    if (!data.accessToken) { showError('No access token returned. Please contact support.'); return; }
+    if (!data.user)        { showError('No user data returned. Please contact support.'); return; }
 
-    // ── Persist auth tokens ONLY ─────────────────────────────────
-    localStorage.setItem('cnj_access_token',      data.accessToken);
-    localStorage.setItem('cnjohnson_auth',         JSON.stringify(data.user));
+    /* ── Store session in cookies (works across all devices) ────── */
+    const age = data.expiresIn || 3600;
+    setCookie('cnj_access_token',  data.accessToken,          age);
+    setCookie('cnjohnson_auth',    JSON.stringify(data.user), age);
     if (data.refreshToken) {
-      localStorage.setItem('cnj_refresh_token',    data.refreshToken);
+      setCookie('cnj_refresh_token', data.refreshToken,       age * 24);
     }
-    const expiryMs = data.expiresIn ? data.expiresIn * 1000 : 3600_000;
-    localStorage.setItem('cnjohnson_token_expiry', String(Date.now() + expiryMs));
 
-    console.log('[CNJ Login] ✅', data.user.email, '| role:', data.user.role);
+    // Verify cookies actually wrote before redirecting
+    const verify = document.cookie.includes('cnj_access_token');
+    console.log('[CNJ Login] ✅ role:', data.user.role, '| cookies set:', verify);
 
-    // Role-based redirect
+    if (!verify) {
+      showError('Session could not be saved. Please check your browser allows cookies for this site.');
+      return;
+    }
+
     const role = (data.user.role || '').toUpperCase();
     window.location.href = role === 'CASHIER' ? 'pos.html' : 'dashboard.html';
 
   } catch (err) {
     const isNetwork = err.name === 'TypeError' || err.message?.includes('fetch');
-    showError(
-      isNetwork
-        ? 'Cannot reach the server. Check your internet connection.'
-        : 'An unexpected error occurred. Please try again.'
+    showError(isNetwork
+      ? 'Cannot reach the server. Check your internet connection.'
+      : 'An unexpected error occurred. Please try again.'
     );
     console.error('[CNJ Login] Exception:', err);
   } finally {
@@ -164,7 +156,7 @@ signInBtn?.addEventListener('click', async () => {
   }
 });
 
-// ── Sign-up link ───────────────────────────────────────────────────
+/* ── Sign-up link ───────────────────────────────────────────────── */
 signUpLink?.addEventListener('click', e => {
   e.preventDefault();
   window.location.href = 'signup.html';

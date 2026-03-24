@@ -1,18 +1,16 @@
 /**
- * auth-guard.js — C.N. Johnson Ventures
+ * auth.js — C.N. Johnson Ventures
  * Include on every protected page BEFORE any inline scripts.
- * DO NOT also include auth.js — this file replaces it entirely.
+ * DO NOT include on login.html, signup.html, or pending.html.
  *
- * localStorage usage is LIMITED TO AUTH TOKENS ONLY:
- *   cnj_access_token, cnj_refresh_token, cnjohnson_auth, cnjohnson_token_expiry
- *
- * NO business/app data is stored in localStorage.
- * All products, sales, customers, etc. are fetched from the DB on every page load.
+ * Uses cookies for auth token storage so sessions work across all devices.
  *
  * Provides:
- *  - CNJ.token        — current access token (always fresh)
- *  - CNJ.fetch(url, opts) — drop-in fetch wrapper that auto-refreshes on 401
- *  - CNJ.logout()     — clears auth tokens and redirects
+ *  - CNJ.token            — current access token
+ *  - CNJ.user             — parsed user object
+ *  - CNJ.role             — e.g. "CASHIER", "ADMIN", "MANAGER"
+ *  - CNJ.fetch(url, opts) — drop-in fetch wrapper, auto-refreshes on 401
+ *  - CNJ.logout()         — clears auth cookies and redirects to login
  */
 (() => {
   'use strict';
@@ -20,34 +18,46 @@
   const API_BASE     = 'https://cn-active-backend-1.onrender.com';
   const PUBLIC_PAGES = ['login.html', 'signup.html', 'pending.html', 'index.html', ''];
   const currentPage  = window.location.pathname.split('/').pop();
+  const IS_HTTPS     = location.protocol === 'https:';
 
   if (PUBLIC_PAGES.includes(currentPage)) return;
 
-  // ── Auth token keys (the ONLY things stored in localStorage) ──────
-  const K = {
-    token:   'cnj_access_token',
-    refresh: 'cnj_refresh_token',
-    auth:    'cnjohnson_auth',
-    expiry:  'cnjohnson_token_expiry',
-  };
+  /* ── Cookie helpers ─────────────────────────────────────────────── */
+  function getCookie(name) {
+    const match = document.cookie.match(new RegExp('(?:^|; )' + name + '=([^;]*)'));
+    return match ? decodeURIComponent(match[1]) : null;
+  }
 
-  function getToken()   { return localStorage.getItem(K.token); }
-  function getRefresh() { return localStorage.getItem(K.refresh); }
-  function getAuth()    { try { return JSON.parse(localStorage.getItem(K.auth)); } catch { return null; } }
+  function setCookie(name, value, maxAgeSeconds) {
+    const age    = maxAgeSeconds ? `; max-age=${maxAgeSeconds}` : '';
+    const secure = IS_HTTPS ? '; Secure' : '';
+    document.cookie = `${name}=${encodeURIComponent(value)}${age}; path=/; SameSite=Lax${secure}`;
+  }
+
+  function deleteCookie(name) {
+    const secure = IS_HTTPS ? '; Secure' : '';
+    document.cookie = `${name}=; max-age=0; path=/; SameSite=Lax${secure}`;
+  }
+
+  /* ── Token accessors ────────────────────────────────────────────── */
+  function getToken()   { return getCookie('cnj_access_token'); }
+  function getRefresh() { return getCookie('cnj_refresh_token'); }
+  function getAuth() {
+    try { return JSON.parse(getCookie('cnjohnson_auth') || 'null'); } catch { return null; }
+  }
 
   function setTokens(access, refresh, expiresIn) {
-    localStorage.setItem(K.token, access);
-    if (refresh) localStorage.setItem(K.refresh, refresh);
-    const ms = expiresIn ? expiresIn * 1000 : 60 * 60 * 1000;
-    localStorage.setItem(K.expiry, Date.now() + ms);
+    const age = expiresIn || 3600;
+    setCookie('cnj_access_token', access, age);
+    if (refresh) setCookie('cnj_refresh_token', refresh, age * 24);
   }
 
   function clearAuth() {
-    // Remove ONLY auth keys — app state is in-memory (STATE) and the DB, not localStorage
-    [K.token, K.refresh, K.auth, K.expiry].forEach(k => localStorage.removeItem(k));
+    ['cnj_access_token', 'cnj_refresh_token', 'cnjohnson_auth', 'cnj_pending_email']
+      .forEach(deleteCookie);
   }
 
-  // ── Token refresh ────────────────────────────────────────────────
+  /* ── Token refresh ──────────────────────────────────────────────── */
   let _refreshPromise = null;
 
   async function refreshToken() {
@@ -79,40 +89,33 @@
     return result;
   }
 
-  // ── Guard: check auth on page load ───────────────────────────────
+  /* ── Guard: redirect if not authenticated ───────────────────────── */
   const token = getToken();
   const auth  = getAuth();
 
   if (!token || !auth) {
+    console.warn('[CNJ] No valid session — redirecting to login');
     window.location.replace('login.html');
     return;
   }
 
-  const expiry = Number(localStorage.getItem(K.expiry) || 0);
-  if (expiry && Date.now() > expiry) {
-    refreshToken().then(newToken => {
-      if (!newToken) {
-        clearAuth();
-        window.location.replace('login.html');
-      }
-    });
-  }
-
-  // ── Role guards ──────────────────────────────────────────────────
+  /* ── Role guards ────────────────────────────────────────────────── */
   const role = auth.role;
+
   if (role === 'CASHIER' && currentPage !== 'pos.html') {
     window.location.replace('pos.html');
     return;
   }
+
   const ADMIN_ONLY = ['admin.html', 'admin-users.html', 'users.html'];
   if (role === 'MANAGER' && ADMIN_ONLY.includes(currentPage)) {
     window.location.replace('dashboard.html');
     return;
   }
 
-  // ── CNJ global ───────────────────────────────────────────────────
+  /* ── CNJ global ─────────────────────────────────────────────────── */
   window.CNJ = {
-    user:      auth,
+    user:  auth,
     role,
     get token() { return getToken(); },
 
@@ -125,7 +128,7 @@
         ...opts,
         headers: {
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${tok}`,
+          'Authorization': `Bearer ${tok}`,
           ...(opts.headers || {}),
         },
       });
@@ -137,31 +140,22 @@
         if (newToken) {
           res = await makeReq(newToken);
         } else {
-          const method = (opts.method || 'GET').toUpperCase();
-          if (method === 'GET') {
-            clearAuth();
-            window.location.replace('login.html');
-            return res;
-          }
+          clearAuth();
+          window.location.replace('login.html');
+          return res;
         }
       }
+
       return res;
     },
 
     logout() {
-      // Clears ONLY auth tokens — no other localStorage keys are used by this app
       clearAuth();
       window.location.replace('login.html');
     },
   };
 
-  // Silently refresh token 1 minute before expiry
-  const msUntilExpiry = expiry ? expiry - Date.now() : 0;
-  const refreshIn     = Math.max(msUntilExpiry - 60_000, 0);
-  if (refreshIn < 14 * 60 * 1000) {
-    setTimeout(() => {
-      refreshToken().catch(() => {});
-    }, refreshIn);
-  }
+  /* ── Proactive silent refresh after 55 minutes ──────────────────── */
+  setTimeout(() => refreshToken().catch(() => {}), 55 * 60 * 1000);
 
 })();

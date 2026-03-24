@@ -35,16 +35,6 @@
 
     .divider { height:1px; background:linear-gradient(90deg,transparent,var(--border),transparent); margin:0 -38px 28px; }
 
-    .role-label { font-size:11px; font-weight:500; letter-spacing:0.1em; text-transform:uppercase; color:var(--muted); margin-bottom:8px; display:block; }
-    .role-row { display:grid; grid-template-columns:1fr 1fr 1fr; gap:6px; margin-bottom:24px; }
-    .role-btn { padding:10px 0; border:1px solid var(--border); border-radius:8px; background:transparent; color:var(--muted); font-family:'DM Sans',sans-serif; font-size:12px; font-weight:400; letter-spacing:0.05em; cursor:pointer; transition:all var(--ease); text-transform:uppercase; position:relative; overflow:hidden; }
-    .role-btn::before { content:''; position:absolute; inset:0; background:var(--gold-dim); opacity:0; transition:opacity var(--ease); }
-    .role-btn:hover { border-color:var(--gold); color:var(--gold); }
-    .role-btn:hover::before { opacity:1; }
-    .role-btn.active { border-color:var(--gold); color:var(--gold-light); font-weight:500; }
-    .role-btn.active::before { opacity:1; }
-    .role-btn.active::after { content:''; position:absolute; bottom:5px; left:50%; transform:translateX(-50%); width:4px; height:4px; background:var(--gold); border-radius:50%; }
-
     .field { margin-bottom:16px; }
     .field label { display:block; font-size:11px; font-weight:500; letter-spacing:0.1em; text-transform:uppercase; color:var(--muted); margin-bottom:7px; }
     .field input { width:100%; padding:12px 14px; background:rgba(255,255,255,0.03); border:1px solid var(--border); border-radius:var(--radius); color:var(--text); font-family:'DM Sans',sans-serif; font-size:14px; font-weight:300; outline:none; transition:border-color var(--ease),box-shadow var(--ease),background var(--ease); -webkit-appearance:none; }
@@ -60,8 +50,6 @@
     .banner.error   { background:var(--error-bg);   border:1px solid var(--error-border);   color:var(--error-text); }
     .banner.warn    { background:var(--warn-bg);    border:1px solid var(--warn-border);    color:var(--warn-text); }
     .banner.success { background:var(--success-bg); border:1px solid var(--success-border); color:var(--success-text); }
-
-    .banner a { color:inherit; font-weight:500; }
 
     .btn-primary { width:100%; padding:13px; margin-top:6px; background:linear-gradient(135deg,#c9a84c,#a8863a); border:none; border-radius:var(--radius); color:#0d0d0d; font-family:'DM Sans',sans-serif; font-size:14px; font-weight:500; letter-spacing:0.07em; text-transform:uppercase; cursor:pointer; transition:opacity var(--ease),transform var(--ease),box-shadow var(--ease); box-shadow:0 4px 20px rgba(201,168,76,0.28); }
     .btn-primary:hover:not(:disabled) { opacity:0.9; transform:translateY(-1px); box-shadow:0 8px 28px rgba(201,168,76,0.38); }
@@ -92,16 +80,9 @@
 
       <div class="divider"></div>
 
-      <div id="errorBox"   class="banner error" role="alert"></div>
-      <div id="warnBox"    class="banner warn"  role="alert"></div>
+      <div id="errorBox"   class="banner error"   role="alert"></div>
+      <div id="warnBox"    class="banner warn"    role="alert"></div>
       <div id="successBox" class="banner success" role="status"></div>
-
-      <span class="role-label">Sign in as</span>
-      <div class="role-row">
-        <button class="role-btn active" data-role="admin"   aria-pressed="true">Admin</button>
-        <button class="role-btn"        data-role="manager" aria-pressed="false">Manager</button>
-        <button class="role-btn"        data-role="cashier" aria-pressed="false">Cashier</button>
-      </div>
 
       <div class="field">
         <label for="email">Email</label>
@@ -120,109 +101,127 @@
         </div>
       </div>
 
-      <button class="btn-primary"   id="signInBtn">Sign In</button>
+      <button class="btn-primary" id="signInBtn" type="button">Sign In</button>
       <button class="btn-secondary" id="signUpBtn">Create Account</button>
 
       <div class="footer-row"><a href="#">Forgot password?</a></div>
     </div>
   </div>
 
-  <script>
-  (() => {
-    'use strict';
-    const API_URL = 'https://cn-active-backend-1.onrender.com';
+<script>
+(() => {
+  'use strict';
+  const API_URL = 'https://cn-active-backend-1.onrender.com';
 
-    const emailInput = document.getElementById('email');
-    const passInput  = document.getElementById('password');
-    const signInBtn  = document.getElementById('signInBtn');
-    const signUpBtn  = document.getElementById('signUpBtn');
-    const errorBox   = document.getElementById('errorBox');
-    const warnBox    = document.getElementById('warnBox');
-    const successBox = document.getElementById('successBox');
-    const roleBtns   = document.querySelectorAll('.role-btn');
-    let selectedRole = 'admin';
+  const emailInput = document.getElementById('email');
+  const passInput  = document.getElementById('password');
+  const signInBtn  = document.getElementById('signInBtn');
+  const signUpBtn  = document.getElementById('signUpBtn');
+  const errorBox   = document.getElementById('errorBox');
+  const warnBox    = document.getElementById('warnBox');
+  const successBox = document.getElementById('successBox');
 
-    roleBtns.forEach(btn => {
-      btn.addEventListener('click', () => {
-        roleBtns.forEach(b => { b.classList.remove('active'); b.setAttribute('aria-pressed','false'); });
-        btn.classList.add('active'); btn.setAttribute('aria-pressed','true');
-        selectedRole = btn.dataset.role;
-        clearAll();
+  /* ── Cookie helper ── */
+  function setCookie(name, value, maxAgeSeconds) {
+    const age = maxAgeSeconds ? `; max-age=${maxAgeSeconds}` : '';
+    document.cookie = `${name}=${encodeURIComponent(value)}${age}; path=/; SameSite=Lax`;
+  }
+
+  /* ── Password toggle ── */
+  document.querySelector('.toggle-pass').addEventListener('click', () => {
+    const isHidden = passInput.type === 'password';
+    passInput.type = isHidden ? 'text' : 'password';
+    document.getElementById('eye-icon').innerHTML = isHidden
+      ? '<line x1="1" y1="1" x2="23" y2="23"/><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94"/><path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19"/>'
+      : '<path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/>';
+  });
+
+  signUpBtn.addEventListener('click', () => { window.location.href = 'signup.html'; });
+
+  function showError(msg)   { clearAll(); errorBox.textContent = msg;    errorBox.style.display = 'block'; }
+  function showWarn(msg)    { clearAll(); warnBox.innerHTML    = msg;    warnBox.style.display  = 'block'; }
+  function showSuccess(msg) { clearAll(); successBox.textContent = msg;  successBox.style.display = 'block'; }
+  function clearAll()       { [errorBox, warnBox, successBox].forEach(b => b.style.display = 'none'); }
+  function setLoading(on)   { signInBtn.disabled = on; signInBtn.textContent = on ? 'Signing in…' : 'Sign In'; }
+
+  [emailInput, passInput].forEach(el => {
+    el.addEventListener('keydown', e => { if (e.key === 'Enter') signInBtn.click(); });
+  });
+
+  signInBtn.addEventListener('click', async () => {
+    clearAll();
+    const email    = emailInput.value.trim();
+    const password = passInput.value.trim();
+
+    if (!email || !password) { showError('Please enter your email and password.'); return; }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) { showError('Please enter a valid email address.'); emailInput.focus(); return; }
+    if (password.length < 6) { showError('Password must be at least 6 characters.'); passInput.focus(); return; }
+
+    setLoading(true);
+    console.log('[CNJ Login] Sending request...');
+
+    try {
+      const res = await fetch(API_URL + '/api/auth/login', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ email, password }),
       });
-    });
 
-    document.querySelector('.toggle-pass').addEventListener('click', () => {
-      const isHidden = passInput.type === 'password';
-      passInput.type = isHidden ? 'text' : 'password';
-      document.getElementById('eye-icon').innerHTML = isHidden
-        ? '<line x1="1" y1="1" x2="23" y2="23"/><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94"/><path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19"/>'
-        : '<path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/>';
-    });
+      console.log('[CNJ Login] Response status:', res.status);
 
-    signUpBtn.addEventListener('click', () => { window.location.href = 'signup.html'; });
-
-    const isValidEmail = e => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e);
-    function showError(msg)   { clearAll(); errorBox.textContent=msg;   errorBox.style.display='block'; }
-    function showWarn(msg)    { clearAll(); warnBox.innerHTML=msg;      warnBox.style.display='block'; }
-    function showSuccess(msg) { clearAll(); successBox.textContent=msg; successBox.style.display='block'; }
-    function clearAll()       { [errorBox,warnBox,successBox].forEach(b => b.style.display='none'); }
-    function setLoading(on)   { signInBtn.disabled=on; signInBtn.textContent=on?'Signing in…':'Sign In'; }
-
-    [emailInput, passInput].forEach(el => {
-      el.addEventListener('keydown', e => { if (e.key==='Enter') signInBtn.click(); });
-    });
-
-    signInBtn.addEventListener('click', async () => {
-      clearAll();
-      const email    = emailInput.value.trim();
-      const password = passInput.value.trim();
-
-      if (!email || !password) { showError('Please enter your email and password.'); return; }
-      if (!isValidEmail(email)) { showError('Please enter a valid email address.'); emailInput.focus(); return; }
-      if (password.length < 6) { showError('Password must be at least 6 characters.'); passInput.focus(); return; }
-
-      setLoading(true);
-      try {
-        const res  = await fetch(API_URL + '/api/auth/login', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ email, password, role: selectedRole }),
-        });
-        const data = await res.json();
-
-        // Pending approval — redirect to pending page
-        if (res.status === 403 && data.code === 'PENDING_APPROVAL') {
-          localStorage.setItem('cnj_pending_email', email);
-          window.location.href = 'pending.html';
-          return;
-        }
-
-        if (!res.ok) { showError(data.message || 'Login failed. Please try again.'); return; }
-
-        localStorage.setItem('cnj_access_token', data.accessToken);
-        localStorage.setItem('cnjohnson_auth', JSON.stringify(data.user));
-        if (data.refreshToken) localStorage.setItem('cnj_refresh_token', data.refreshToken);
-        // Store expiry — default to 15 minutes if backend doesn't send expiresIn
-        const expiryMs = data.expiresIn ? data.expiresIn * 1000 : 60 * 60 * 1000;
-        localStorage.setItem('cnjohnson_token_expiry', Date.now() + expiryMs);
-
-        showSuccess('Welcome back! Redirecting…');
-
-        // Role-based redirect
-        const role = data.user.role;
-        setTimeout(() => {
-          if (role === 'CASHIER') window.location.href = 'pos.html';
-          else                    window.location.href = 'dashboard.html';
-        }, 900);
-
-      } catch (err) {
-        showError(err.name === 'TypeError' ? 'Could not reach the server. Check your connection.' : 'An unexpected error occurred.');
-        console.error('[CNJ Login]', err);
-      } finally {
-        setLoading(false);
+      let data;
+      try { data = await res.json(); } catch {
+        console.error('[CNJ Login] Failed to parse JSON');
+        showError('Server returned an invalid response. Please try again.');
+        return;
       }
-    });
-  })();
-  </script>
+
+      console.log('[CNJ Login] Response data:', JSON.stringify(data));
+
+      if (res.status === 403 && data.code === 'PENDING_APPROVAL') {
+        setCookie('cnj_pending_email', email);
+        window.location.href = 'pending.html';
+        return;
+      }
+
+      if (!res.ok) {
+        showError(data.message || data.error || 'Login failed. Please check your credentials.');
+        return;
+      }
+
+      if (!data.accessToken || !data.user) {
+        console.error('[CNJ Login] Bad response shape:', data);
+        showError('Unexpected server response. Please contact support.');
+        return;
+      }
+
+      /* ── Store session in cookies (works across all devices) ── */
+      const age = data.expiresIn || 3600;
+      setCookie('cnj_access_token',  data.accessToken,              age);
+      setCookie('cnjohnson_auth',    JSON.stringify(data.user),     age);
+      if (data.refreshToken) {
+        setCookie('cnj_refresh_token', data.refreshToken,           age * 24);
+      }
+
+      showSuccess('Welcome back! Redirecting…');
+
+      const role = (data.user.role || '').toUpperCase();
+      console.log('[CNJ Login] role:', data.user.role, '→', role);
+      setTimeout(() => {
+        if (role === 'CASHIER') window.location.href = 'pos.html';
+        else                    window.location.href = 'dashboard.html';
+      }, 100);
+
+    } catch (err) {
+      showError(err.name === 'TypeError'
+        ? 'Could not reach the server. Check your connection.'
+        : 'An unexpected error occurred.');
+      console.error('[CNJ Login]', err);
+    } finally {
+      setLoading(false);
+    }
+  });
+})();
+</script>
 </body>
 </html>

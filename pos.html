@@ -12,28 +12,43 @@
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
     :root {
-      --bg: #0a0a0a;
-      --surface: #101010;
-      --card: #151515;
-      --card-hover: #1a1a1a;
-      --border: #1e1e1e;
+    
+      /* Surfaces */
+      --bg:           #baa7a7;
+      --surface:      #101010;
+      --subtle:       #181818;
+      --card:         #151515;
+      --card-hover:   #1a1a1a;
+    
+      /* Borders */
+      --border:       #1e1e1e;
       --border-light: #252525;
-      --gold: #c9a84c;
-      --gold-light: #e2c47a;
-      --gold-dim: rgba(201,168,76,0.08);
-      --gold-glow: rgba(201,168,76,0.15);
-      --text: #ece8e0;
-      --text-secondary: #a09a92;
-      --muted: #55504a;
-      --subtle: #181818;
-      --green: #22c55e;
-      --green-bg: rgba(34,197,94,0.08);
-      --green-border: rgba(34,197,94,0.25);
-      --red: #ef4444;
-      --red-bg: rgba(239,68,68,0.08);
-      --red-border: rgba(239,68,68,0.25);
-      --radius: 8px;
-      --ease: 0.14s ease;
+    
+      /* Gold */
+      --gold:         #c9a84c;
+      --gold-light:   #e2c47a;
+      --gold-dim:     rgba(201, 168, 76, 0.08);
+      --gold-glow:    rgba(201, 168, 76, 0.15);
+    
+      /* Text */
+      --text:         #ece8e0;
+      --text-sub:     #a09a92;
+      --text-muted:   #55504a;
+    
+      /* Status — success */
+      --green:        #22c55e;
+      --green-bg:     rgba(34, 197, 94, 0.08);
+      --green-border: rgba(34, 197, 94, 0.25);
+    
+      /* Status — danger */
+      --red:          #ef4444;
+      --red-bg:       rgba(239, 68, 68, 0.08);
+      --red-border:   rgba(239, 68, 68, 0.25);
+    
+      /* Misc */
+      --radius:       8px;
+      --ease:         0.14s ease;
+    
     }
 
     html, body {
@@ -656,7 +671,8 @@
       .receipt-actions { display: none; }
     }
   </style>
-<script src="auth.js"></script>
+
+  <script src="auth.js"></script>
 </head>
 <body>
 
@@ -672,7 +688,8 @@
       <span id="connText">Connecting…</span>
     </div>
     <div class="cashier-info">Cashier: <span id="cashierName">—</span></div>
-    <button class="btn-logout" onclick="logout()">Sign Out</button>
+    <!-- FIX 2: call CNJ.logout() instead of bare logout() -->
+    <button class="btn-logout" onclick="CNJ.logout()">Sign Out</button>
   </div>
 </header>
 
@@ -797,26 +814,20 @@
   /* ─────────────────────────────────────────
      Config
   ───────────────────────────────────────── */
-  var API = 'https://cn-active-backend-1.onrender.com';
+  var API      = 'https://cn-active-backend-1.onrender.com';
   var CURRENCY = '\u20a6'; // ₦
 
   /* ─────────────────────────────────────────
-     Auth guard
+     Auth — auth.js runs first and sets CNJ.
+     If CNJ is missing, auth.js already redirected.
   ───────────────────────────────────────── */
-  var token = localStorage.getItem('cnjohnson_access_token');
-  var auth  = JSON.parse(localStorage.getItem('cnjohnson_auth') || 'null');
+  if (!window.CNJ) {
+      window.location.replace('login.html');
+      return;
+    }
 
-  if (!token || !auth) {
-    window.location.href = 'login.html';
-    return;
-  }
-
-  document.getElementById('cashierName').textContent = auth.name || auth.email || '—';
-
-  var reqHeaders = {
-    'Content-Type': 'application/json',
-    'Authorization': 'Bearer ' + token
-  };
+  document.getElementById('cashierName').textContent =
+    CNJ.user.name || CNJ.user.email || '—';
 
   /* ─────────────────────────────────────────
      State
@@ -872,12 +883,9 @@
   function checkConnection() {
     var dot  = document.getElementById('connDot');
     var text = document.getElementById('connText');
-    var ctrl = new AbortController();
-    var timer = setTimeout(function () { ctrl.abort(); }, 8000);
 
-    fetch(API + '/api/products', { headers: reqHeaders, signal: ctrl.signal })
+    CNJ.fetch(API + '/api/products')
       .then(function (res) {
-        clearTimeout(timer);
         if (res.ok || res.status === 401 || res.status === 403) {
           dot.style.background  = 'var(--green)';
           text.textContent      = 'Connected';
@@ -887,7 +895,6 @@
         }
       })
       .catch(function () {
-        clearTimeout(timer);
         dot.style.background = 'var(--red)';
         text.textContent     = 'Server offline';
         text.style.color     = 'var(--red)';
@@ -905,7 +912,7 @@
         '<span style="font-size:12px">Loading products…</span>' +
       '</div>';
 
-    fetch(API + '/api/products', { headers: reqHeaders })
+    CNJ.fetch(API + '/api/products')
       .then(function (res) {
         if (!res.ok) return res.json().then(function (e) { throw new Error(e.message || 'Server error ' + res.status); });
         return res.json();
@@ -914,7 +921,6 @@
         products = data.products || (data.data && data.data.products) || data.data || (Array.isArray(data) ? data : []);
         if (!Array.isArray(products)) products = [];
 
-        // Build category tabs
         var cats = [];
         products.forEach(function (p) {
           var cat = p.category && p.category.name;
@@ -956,7 +962,7 @@
      Load customers
   ───────────────────────────────────────── */
   function loadCustomers() {
-    fetch(API + '/api/customers', { headers: reqHeaders })
+    CNJ.fetch(API + '/api/customers')
       .then(function (res) { if (!res.ok) throw new Error(); return res.json(); })
       .then(function (data) {
         customers = data.customers || data.data || (Array.isArray(data) ? data : []);
@@ -975,7 +981,7 @@
      Load settings
   ───────────────────────────────────────── */
   function loadSettings() {
-    fetch(API + '/api/settings', { headers: reqHeaders })
+    CNJ.fetch(API + '/api/settings')
       .then(function (res) { return res.json(); })
       .then(function (data) {
         var s = data.settings || data;
@@ -1195,7 +1201,7 @@
       customerId: customerId
     };
 
-    fetch(API + '/api/sales', { method: 'POST', headers: reqHeaders, body: JSON.stringify(payload) })
+    CNJ.fetch(API + '/api/sales', { method: 'POST', body: JSON.stringify(payload) })
       .then(function (res) { return res.json().then(function (d) { if (!res.ok) throw new Error(d.message || 'Sale failed'); return d; }); })
       .then(function (data) {
         showReceipt(data.sale || data, subtotal, discount, tax, grand);
@@ -1266,7 +1272,6 @@
     document.getElementById('receiptModal').classList.add('open');
   }
 
-  /* Save receipt as HTML file */
   window.saveReceipt = function () {
     var full =
       '<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Receipt ' + lastReceiptNo + '</title>' +
@@ -1288,7 +1293,6 @@
     showToast('Receipt saved!', 'success');
   };
 
-  /* New sale */
   window.newSale = function () {
     cart = [];
     renderCart();
@@ -1298,16 +1302,6 @@
     document.getElementById('chargeBtn').innerHTML  = 'Charge &mdash; <span id="chargeBtnAmount">' + CURRENCY + '0.00</span>';
     document.getElementById('chargeBtn').disabled   = true;
     window.selectPayment('CASH', document.querySelector('.pay-btn[data-method="CASH"]'));
-  };
-
-  /* ─────────────────────────────────────────
-     Logout
-  ───────────────────────────────────────── */
-  window.logout = function () {
-    ['cnjohnson_access_token','cnjohnson_auth','cnjohnson_token_expiry','cnjohnson_refresh_token','cnj_pending_email'].forEach(function (k) {
-      localStorage.removeItem(k);
-    });
-    window.location.replace('login.html');
   };
 
   /* ─────────────────────────────────────────
@@ -1331,5 +1325,6 @@
 
 }());
 </script>
+
 </body>
 </html>
