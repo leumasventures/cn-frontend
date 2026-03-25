@@ -122,11 +122,11 @@
   const successBox = document.getElementById('successBox');
 
   /* ── Cookie helper ── */
-  function setCookie(name, value, maxAgeSeconds) {
-    const age = maxAgeSeconds ? `; max-age=${maxAgeSeconds}` : '';
-    document.cookie = `${name}=${encodeURIComponent(value)}${age}; path=/; SameSite=Lax`;
-  }
-
+function setCookie(name, value, maxAgeSeconds) {
+  const age    = maxAgeSeconds ? `; max-age=${maxAgeSeconds}` : '';
+  const secure = location.protocol === 'https:' ? '; Secure' : '';
+  document.cookie = `${name}=${encodeURIComponent(value)}${age}; path=/; domain=cnjohnsonventures.com; SameSite=Lax${secure}`;
+}
   /* ── Password toggle ── */
   document.querySelector('.toggle-pass').addEventListener('click', () => {
     const isHidden = passInput.type === 'password';

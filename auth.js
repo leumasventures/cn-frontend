@@ -2,15 +2,6 @@
  * auth.js — C.N. Johnson Ventures
  * Include on every protected page BEFORE any inline scripts.
  * DO NOT include on login.html, signup.html, or pending.html.
- *
- * Uses cookies for auth token storage so sessions work across all devices.
- *
- * Provides:
- *  - CNJ.token            — current access token
- *  - CNJ.user             — parsed user object
- *  - CNJ.role             — e.g. "CASHIER", "ADMIN", "MANAGER"
- *  - CNJ.fetch(url, opts) — drop-in fetch wrapper, auto-refreshes on 401
- *  - CNJ.logout()         — clears auth cookies and redirects to login
  */
 (() => {
   'use strict';
@@ -19,6 +10,10 @@
   const PUBLIC_PAGES = ['login.html', 'signup.html', 'pending.html', 'index.html', ''];
   const currentPage  = window.location.pathname.split('/').pop();
   const IS_HTTPS     = location.protocol === 'https:';
+  const SESSION_AGE  = 7 * 24 * 60 * 60; // 7 days
+
+  // FIX: always use the root domain so cookies work on www. AND non-www
+  const COOKIE_DOMAIN = 'cnjohnsonventures.com';
 
   if (PUBLIC_PAGES.includes(currentPage)) return;
 
@@ -31,12 +26,12 @@
   function setCookie(name, value, maxAgeSeconds) {
     const age    = maxAgeSeconds ? `; max-age=${maxAgeSeconds}` : '';
     const secure = IS_HTTPS ? '; Secure' : '';
-    document.cookie = `${name}=${encodeURIComponent(value)}${age}; path=/; SameSite=Lax${secure}`;
+    document.cookie = `${name}=${encodeURIComponent(value)}${age}; path=/; domain=${COOKIE_DOMAIN}; SameSite=Lax${secure}`;
   }
 
   function deleteCookie(name) {
     const secure = IS_HTTPS ? '; Secure' : '';
-    document.cookie = `${name}=; max-age=0; path=/; SameSite=Lax${secure}`;
+    document.cookie = `${name}=; max-age=0; path=/; domain=${COOKIE_DOMAIN}; SameSite=Lax${secure}`;
   }
 
   /* ── Token accessors ────────────────────────────────────────────── */
@@ -46,10 +41,11 @@
     try { return JSON.parse(getCookie('cnjohnson_auth') || 'null'); } catch { return null; }
   }
 
-  function setTokens(access, refresh, expiresIn) {
-    const age = expiresIn || 3600;
+  function setTokens(access, refresh, user, expiresIn) {
+    const age = expiresIn || SESSION_AGE;
     setCookie('cnj_access_token', access, age);
     if (refresh) setCookie('cnj_refresh_token', refresh, age * 24);
+    if (user)    setCookie('cnjohnson_auth', JSON.stringify(user), age);
   }
 
   function clearAuth() {
@@ -75,7 +71,7 @@
         if (!res.ok) return null;
         const data = await res.json();
         if (data.accessToken) {
-          setTokens(data.accessToken, data.refreshToken || refreshTok, data.expiresIn);
+          setTokens(data.accessToken, data.refreshToken || refreshTok, data.user || getAuth(), data.expiresIn);
           return data.accessToken;
         }
       } catch (e) {
@@ -94,8 +90,20 @@
   const auth  = getAuth();
 
   if (!token || !auth) {
-    console.warn('[CNJ] No valid session — redirecting to login');
-    window.location.replace('login.html');
+    const refreshTok = getRefresh();
+    if (refreshTok) {
+      refreshToken().then(newToken => {
+        if (newToken) {
+          window.location.reload();
+        } else {
+          console.warn('[CNJ] Refresh failed — redirecting to login');
+          window.location.replace('login.html');
+        }
+      });
+    } else {
+      console.warn('[CNJ] No valid session — redirecting to login');
+      window.location.replace('login.html');
+    }
     return;
   }
 
@@ -155,7 +163,7 @@
     },
   };
 
-  /* ── Proactive silent refresh after 55 minutes ──────────────────── */
-  setTimeout(() => refreshToken().catch(() => {}), 55 * 60 * 1000);
+  // Proactive refresh 30 minutes before session ends
+  setTimeout(() => refreshToken().catch(() => {}), (SESSION_AGE - 30 * 60) * 1000);
 
 })();
